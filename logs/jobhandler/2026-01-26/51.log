@@ -1,0 +1,3 @@
+2026-01-26 21:34:00 [com.xxl.job.core.thread.JobThread#run]-[134]-[xxl-job, JobThread-12-1769434320065] <br>----------- xxl-job job execute start -----------<br>----------- Param:
+2026-01-26 21:34:00 [com.xxl.job.core.thread.JobThread#run]-[180]-[xxl-job, JobThread-12-1769434320065] <br>----------- xxl-job job execute end(finish) -----------<br>----------- Result: handleCode=200, handleMsg = null
+2026-01-26 21:34:00 [com.xxl.job.core.thread.TriggerCallbackThread#callbackLog]-[197]-[xxl-job, executor TriggerCallbackThread] <br>----------- xxl-job job callback finish.

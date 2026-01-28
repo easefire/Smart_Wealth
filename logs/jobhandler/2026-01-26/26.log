@@ -1,0 +1,94 @@
+2026-01-26 18:01:47 [com.xxl.job.core.thread.JobThread#run]-[134]-[xxl-job, JobThread-7-1769421707521] <br>----------- xxl-job job execute start -----------<br>----------- Param:
+2026-01-26 18:01:47 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[29]-[xxl-job, JobThread-7-1769421707521] ========== 开始执行每日收益结算 ==========
+2026-01-26 18:01:47 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[30]-[xxl-job, JobThread-7-1769421707521] 当前物理时间: 1769421707523
+2026-01-26 18:01:47 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[31]-[xxl-job, JobThread-7-1769421707521] 业务结算日期 (T-1): 2026-01-25
+2026-01-26 18:01:47 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[50]-[xxl-job, JobThread-7-1769421707521] org.springframework.dao.DataIntegrityViolationException: 
+### Error updating database.  Cause: java.sql.SQLException: Field 'id' doesn't have a default value
+### The error may exist in file [/Users/huochuanrui/Java/smart_wealth/sw-web-start/target/classes/mapper/DailyProfitMapper.xml]
+### The error may involve defaultParameterMap
+### The error occurred while setting parameters
+### SQL: INSERT INTO t_trade_daily_profit         (order_id, user_id, prod_id, daily_profit, profit_date, type, create_time)         VALUES                        (?, ?, ?, ?, ?, ?, NOW())
+### Cause: java.sql.SQLException: Field 'id' doesn't have a default value
+; Field 'id' doesn't have a default value
+	at org.springframework.jdbc.support.SQLErrorCodeSQLExceptionTranslator.doTranslate(SQLErrorCodeSQLExceptionTranslator.java:258)
+	at org.springframework.jdbc.support.AbstractFallbackSQLExceptionTranslator.translate(AbstractFallbackSQLExceptionTranslator.java:107)
+	at org.mybatis.spring.MyBatisExceptionTranslator.translateExceptionIfPossible(MyBatisExceptionTranslator.java:95)
+	at org.mybatis.spring.SqlSessionTemplate$SqlSessionInterceptor.invoke(SqlSessionTemplate.java:347)
+	at jdk.proxy2/jdk.proxy2.$Proxy120.insert(Unknown Source)
+	at org.mybatis.spring.SqlSessionTemplate.insert(SqlSessionTemplate.java:224)
+	at com.baomidou.mybatisplus.core.override.MybatisMapperMethod.execute(MybatisMapperMethod.java:59)
+	at com.baomidou.mybatisplus.core.override.MybatisMapperProxy$PlainMethodInvoker.invoke(MybatisMapperProxy.java:156)
+	at com.baomidou.mybatisplus.core.override.MybatisMapperProxy.invoke(MybatisMapperProxy.java:93)
+	at jdk.proxy2/jdk.proxy2.$Proxy143.insertBatch(Unknown Source)
+	at com.smartwealth.trade.service.impl.TradeOrderServiceImpl.executeDailySettlement(TradeOrderServiceImpl.java:648)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:355)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.invokeJoinpoint(ReflectiveMethodInvocation.java:196)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:163)
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:379)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768)
+	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:720)
+	at com.smartwealth.trade.service.impl.TradeOrderServiceImpl$$SpringCGLIB$$0.executeDailySettlement(<generated>)
+	at com.smartwealth.trade.job.TradeJobHandler.dailySettlementJobHandler(TradeJobHandler.java:38)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at com.xxl.job.core.handler.impl.MethodJobHandler.execute(MethodJobHandler.java:31)
+	at com.xxl.job.core.thread.JobThread.run(JobThread.java:167)
+Caused by: java.sql.SQLException: Field 'id' doesn't have a default value
+	at com.mysql.cj.jdbc.exceptions.SQLError.createSQLException(SQLError.java:130)
+	at com.mysql.cj.jdbc.exceptions.SQLExceptionsMapping.translateException(SQLExceptionsMapping.java:122)
+	at com.mysql.cj.jdbc.ClientPreparedStatement.executeInternal(ClientPreparedStatement.java:912)
+	at com.mysql.cj.jdbc.ClientPreparedStatement.execute(ClientPreparedStatement.java:354)
+	at com.zaxxer.hikari.pool.ProxyPreparedStatement.execute(ProxyPreparedStatement.java:44)
+	at com.zaxxer.hikari.pool.HikariProxyPreparedStatement.execute(HikariProxyPreparedStatement.java)
+	at jdk.internal.reflect.GeneratedMethodAccessor54.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.apache.ibatis.logging.jdbc.PreparedStatementLogger.invoke(PreparedStatementLogger.java:58)
+	at jdk.proxy3/jdk.proxy3.$Proxy182.execute(Unknown Source)
+	at org.apache.ibatis.executor.statement.PreparedStatementHandler.update(PreparedStatementHandler.java:48)
+	at org.apache.ibatis.executor.statement.RoutingStatementHandler.update(RoutingStatementHandler.java:75)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.apache.ibatis.plugin.Plugin.invoke(Plugin.java:61)
+	at jdk.proxy2/jdk.proxy2.$Proxy181.update(Unknown Source)
+	at org.apache.ibatis.executor.SimpleExecutor.doUpdate(SimpleExecutor.java:50)
+	at org.apache.ibatis.executor.BaseExecutor.update(BaseExecutor.java:117)
+	at org.apache.ibatis.executor.CachingExecutor.update(CachingExecutor.java:76)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.apache.ibatis.plugin.Invocation.proceed(Invocation.java:61)
+	at com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor.intercept(MybatisPlusInterceptor.java:106)
+	at org.apache.ibatis.plugin.Plugin.invoke(Plugin.java:59)
+	at jdk.proxy2/jdk.proxy2.$Proxy180.update(Unknown Source)
+	at org.apache.ibatis.session.defaults.DefaultSqlSession.update(DefaultSqlSession.java:197)
+	at org.apache.ibatis.session.defaults.DefaultSqlSession.insert(DefaultSqlSession.java:184)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.mybatis.spring.SqlSessionTemplate$SqlSessionInterceptor.invoke(SqlSessionTemplate.java:333)
+	... 28 more
+
+2026-01-26 18:01:47 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[55]-[xxl-job, JobThread-7-1769421707521] ========== 结算任务结束 ==========
+2026-01-26 18:01:47 [com.xxl.job.core.thread.JobThread#run]-[180]-[xxl-job, JobThread-7-1769421707521] <br>----------- xxl-job job execute end(finish) -----------<br>----------- Result: handleCode=500, handleMsg = 结算异常: 
+### Error updating database.  Cause: java.sql.SQLException: Field 'id' doesn't have a default value
+### The error may exist in file [/Users/huochuanrui/Java/smart_wealth/sw-web-start/target/classes/mapper/DailyProfitMapper.xml]
+### The error may involve defaultParameterMap
+### The error occurred while setting parameters
+### SQL: INSERT INTO t_trade_daily_profit         (order_id, user_id, prod_id, daily_profit, profit_date, type, create_time)         VALUES                        (?, ?, ?, ?, ?, ?, NOW())
+### Cause: java.sql.SQLException: Field 'id' doesn't have a default value
+; Field 'id' doesn't have a default value
+2026-01-26 18:01:47 [com.xxl.job.core.thread.TriggerCallbackThread#callbackLog]-[197]-[xxl-job, executor TriggerCallbackThread] <br>----------- xxl-job job callback finish.
