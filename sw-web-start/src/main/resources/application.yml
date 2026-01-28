@@ -9,16 +9,52 @@ spring:
     url: jdbc:mysql://localhost:3306/smart_wealth_db?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
     username: root
     password: 923827
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: 923827
+      database: 0
+      lettuce:
+        pool:
+          max-active: 8  # 连接池最大连接数
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5672
+    username: guest
+    password: guest
+    # 核心配置：开启发送确认，这是实现“本地消息表”可靠性的前提
+    publisher-confirm-type: correlated
+    publisher-returns: true
 
 # MyBatis Plus 配置
 mybatis-plus:
   mapper-locations: classpath*:mapper/*.xml
   configuration:
     map-underscore-to-camel-case: true # 开启下划线转驼峰
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 开启控制台打印 SQL，调试神器
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  type-enums-package: com.smartwealth.user.enums # 开启控制台打印 SQL，调试神器
 
 # Knife4j (Swagger) 配置
 knife4j:
   enable: true
   setting:
     language: zh-CN
+
+xxl:
+  job:
+    admin:
+      # 刚才启动的调度中心地址
+      addresses: http://127.0.0.1:8098/xxl-job-admin
+    accessToken: default_token
+    executor:
+      # 执行器名称，去后台配置里要填这个
+      appname: smart-wealth-executor
+      # 自动获取IP，本地开发一般不用动
+      address:
+      ip:
+      # 你的项目作为一个RPC服务端，需要暴露一个端口给调度中心回调
+      # 注意：不要和 server.port 冲突！
+      port: 8999
+      logpath: ./logs/jobhandler
+      logretentiondays: 30

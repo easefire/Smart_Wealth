@@ -35,7 +35,6 @@ public class UserContext {
     public static void set(Long id, String role) {
         threadLocal.set(new UserInfo(id, role));
     }
-
     public static void set(UserInfo userInfo) {
         threadLocal.set(userInfo);
     }

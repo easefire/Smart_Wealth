@@ -2,4 +2,19 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smartwealth.user.mapper.UserAuthMapper">
 
+    <select id="existsByUsername" resultType="java.lang.Boolean">
+        SELECT EXISTS(
+            SELECT 1 FROM t_user_base WHERE username = #{username}
+        )
+    </select>
+    <select id="existsByPhone" resultType="java.lang.Boolean">
+        SELECT EXISTS(
+            SELECT 1 FROM t_user_base WHERE phone = #{phone}
+        )
+    </select>
+    <select id="selectByUsername" resultType="com.smartwealth.user.entity.UserBase">
+        select id,username,phone,real_name,id_card,risk_level,status,create_time
+        from t_user_base
+        where username = #{username}
+    </select>
 </mapper>

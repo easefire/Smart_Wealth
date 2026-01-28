@@ -1,6 +1,8 @@
 package com.smartwealth.trade.entity;
 
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
+import com.smartwealth.trade.enums.TradeStatusEnum;
+import lombok.Data;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -14,141 +16,63 @@ import java.time.LocalDateTime;
  * @since 2026-01-12
  */
 @TableName("t_trade_order")
+@Data
 public class TradeOrder implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
     /**
-     * 订单ID
+     * 订单ID - 建议使用 Snowflake 算法生成
      */
+    @TableId(value = "id", type = IdType.ASSIGN_ID)
     private Long id;
 
     private Long userId;
 
+    /**
+     * 产品ID
+     */
     private Long prodId;
 
     /**
-     * 本金
+     * 本金（申购金额）
      */
     private BigDecimal amount;
 
+    private BigDecimal quantity;
+
+    private BigDecimal frozenQuantity;
+
     /**
-     * 累计收益
+     * 累计收益（确权后每天或每期更新）
      */
     private BigDecimal accumulatedIncome;
 
     /**
-     * 名称快照
+     * 名称快照：防止产品改名导致历史记录混乱
      */
     private String prodNameSnap;
 
     /**
-     * 利率快照
+     * 利率快照：锁定购买时的预期收益率
      */
     private BigDecimal rateSnap;
 
     /**
-     * 1-持有中, 3-已赎回, 4-已关单
+     * 状态：0-待支付, 1-持有中, 2-赎回中, 3-已赎回, 4-已关单
      */
-    private Integer status;
+    private TradeStatusEnum status;
 
     private LocalDateTime createTime;
 
+    /**
+     * 到期时间（如果是定期产品则必须有值）
+     */
     private LocalDateTime expireTime;
 
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public Long getUserId() {
-        return userId;
-    }
-
-    public void setUserId(Long userId) {
-        this.userId = userId;
-    }
-
-    public Long getProdId() {
-        return prodId;
-    }
-
-    public void setProdId(Long prodId) {
-        this.prodId = prodId;
-    }
-
-    public BigDecimal getAmount() {
-        return amount;
-    }
-
-    public void setAmount(BigDecimal amount) {
-        this.amount = amount;
-    }
-
-    public BigDecimal getAccumulatedIncome() {
-        return accumulatedIncome;
-    }
-
-    public void setAccumulatedIncome(BigDecimal accumulatedIncome) {
-        this.accumulatedIncome = accumulatedIncome;
-    }
-
-    public String getProdNameSnap() {
-        return prodNameSnap;
-    }
-
-    public void setProdNameSnap(String prodNameSnap) {
-        this.prodNameSnap = prodNameSnap;
-    }
-
-    public BigDecimal getRateSnap() {
-        return rateSnap;
-    }
-
-    public void setRateSnap(BigDecimal rateSnap) {
-        this.rateSnap = rateSnap;
-    }
-
-    public Integer getStatus() {
-        return status;
-    }
-
-    public void setStatus(Integer status) {
-        this.status = status;
-    }
-
-    public LocalDateTime getCreateTime() {
-        return createTime;
-    }
-
-    public void setCreateTime(LocalDateTime createTime) {
-        this.createTime = createTime;
-    }
-
-    public LocalDateTime getExpireTime() {
-        return expireTime;
-    }
-
-    public void setExpireTime(LocalDateTime expireTime) {
-        this.expireTime = expireTime;
-    }
-
-    @Override
-    public String toString() {
-        return "TradeOrder{" +
-            "id = " + id +
-            ", userId = " + userId +
-            ", prodId = " + prodId +
-            ", amount = " + amount +
-            ", accumulatedIncome = " + accumulatedIncome +
-            ", prodNameSnap = " + prodNameSnap +
-            ", rateSnap = " + rateSnap +
-            ", status = " + status +
-            ", createTime = " + createTime +
-            ", expireTime = " + expireTime +
-        "}";
-    }
+    /**
+     * 建议增加更新时间，方便追溯
+     */
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updateTime;
 }

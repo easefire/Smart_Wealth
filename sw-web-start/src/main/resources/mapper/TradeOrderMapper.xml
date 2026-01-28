@@ -2,4 +2,76 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smartwealth.trade.mapper.TradeOrderMapper">
 
+
+    <update id="onlyUnfreeze">
+        UPDATE t_trade_order
+        SET frozen_quantity = frozen_quantity - #{amount},
+            update_time = NOW()
+        WHERE id = #{orderId} AND frozen_quantity >= #{amount}
+    </update>
+    <update id="deductPositions">
+        UPDATE t_trade_order
+        SET
+            quantity = quantity - #{reduceQuantity},
+            amount = amount - #{reducePrincipal},
+            accumulated_income = accumulated_income - #{reduceIncome},
+            frozen_quantity = frozen_quantity - #{reduceQuantity}, -- 记得释放冻结！
+            update_time = NOW()
+        WHERE id = #{id}
+          AND quantity >= #{reduceQuantity} -- 乐观锁防止超卖（扣成负数）
+    </update>
+
+    <update id="updateStatus">
+        UPDATE t_trade_order
+        SET status = #{status}, update_time = NOW()
+        WHERE id = #{id}
+    </update>
+    <update id="batchAddIncome">
+        UPDATE t_trade_order
+        SET
+        accumulated_income = accumulated_income +
+        CASE id
+        <foreach collection="list" item="item">
+            WHEN #{item.id} THEN #{item.accumulatedIncome}
+        </foreach>
+        END,
+        update_time = NOW()
+        WHERE id IN
+        <foreach collection="list" item="item" open="(" separator="," close=")">
+            #{item.id}
+        </foreach>
+    </update>
+
+    <select id="checkIncomeConsistency" resultType="com.smartwealth.trade.dto.TradeCheckDTO">
+        SELECT
+            o.id AS order_id,
+            o.accumulated_income AS order_income,
+            IFNULL(SUM(p.daily_profit), 0) AS real_sum_income
+        FROM t_trade_order o
+                 -- 关联收益流水表
+                 LEFT JOIN t_trade_daily_profit p ON o.id = p.order_id
+        -- 只查持有中(1)或已赎回(2)的订单，状态根据你实际情况调整
+        WHERE o.status IN (1, 2)
+        GROUP BY o.id
+        -- 【核心】找出 账目不平 的坏蛋 (允许 0.01 误差)
+        HAVING ABS(o.accumulated_income - IFNULL(SUM(p.daily_profit), 0)) > 0.01
+    </select>
+    <select id="sumTradeSharesByPool" resultType="com.smartwealth.trade.dto.PoolCheckDTO">
+        SELECT
+            user_id,
+            prod_id,
+            (
+                -- 当前持有的份额
+                IFNULL(SUM(amount), 0)
+                    +
+                    -- 已经赎回的份额 (查 t_trade_redemption_record)
+                IFNULL((SELECT SUM(amount) FROM t_trade_redemption_record
+                        WHERE user_id = t_trade_order.user_id
+                          AND prod_id = t_trade_order.prod_id
+                          AND status = 2), 0)
+                ) AS amount
+        FROM t_trade_order
+        GROUP BY user_id, prod_id
+    </select>
+
 </mapper>

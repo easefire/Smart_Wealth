@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.smartwealth.user.mapper.BankCardMapper">
+    <select id="selectByIdAndUserId" resultType="com.smartwealth.user.entity.BankCard">
+        SELECT id, user_id,bank_name,card_no,card_type,limit_per_day,is_default
+        FROM t_user_bank_card
+        WHERE id = #{id} AND user_id = #{userId}
+    </select>
+</mapper>

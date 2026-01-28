@@ -8,6 +8,7 @@ import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Objects;
 
@@ -64,5 +65,10 @@ public class GlobalExceptionHandler {
 
         // 返回模糊的错误提示，不要把 "NullPoint..." 直接展示给用户看，不安全也不友好
         return Result.fail(ResultCode.FAILURE);
+    }
+    @ExceptionHandler(NoResourceFoundException.class)
+    public void handleNoResourceFoundException(NoResourceFoundException e) {
+        // 仅仅记录 debug 日志，或者干脆什么都不做
+        log.debug("静态资源未找到: {}", e.getResourcePath());
     }
 }

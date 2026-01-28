@@ -2,4 +2,21 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smartwealth.asset.mapper.AssetFlowMapper">
 
+    <select id="getTodayRechargeSum" resultType="java.math.BigDecimal">
+        SELECT IFNULL(SUM(amount), 0)
+        FROM t_asset_flow
+        WHERE user_id = #{userId}
+          AND biz_id = #{bankCardId}
+          AND type = 'RECHARGE'
+          AND create_time >= CURDATE()
+    </select>
+    <select id="selectPurchaseFlowsWithRemark" resultType="com.smartwealth.asset.dto.AssetFlowTradeDTO">
+        SELECT
+            user_id,
+            biz_id AS prod_id,
+            remark
+        FROM t_asset_flow
+        WHERE type = 'PURCHASE' -- 只查买入的，用来算总投入
+        -- AND create_time >= ... (如果是每日增量对账，记得加时间)
+    </select>
 </mapper>

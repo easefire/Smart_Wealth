@@ -1,8 +1,10 @@
 package com.smartwealth.user.entity;
 
+import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.smartwealth.user.enums.UserStatusEnum;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -53,7 +55,7 @@ public class UserBase implements Serializable {
     /**
      * 1-正常, 2-冻结 (风控用)
      */
-    private Byte status;
+    private UserStatusEnum status;
 
     private LocalDateTime createTime;
 
@@ -105,11 +107,11 @@ public class UserBase implements Serializable {
         this.riskLevel = riskLevel;
     }
 
-    public Byte getStatus() {
+    public UserStatusEnum getStatus() {
         return status;
     }
 
-    public void setStatus(Byte status) {
+    public void setStatus(UserStatusEnum status) {
         this.status = status;
     }
 

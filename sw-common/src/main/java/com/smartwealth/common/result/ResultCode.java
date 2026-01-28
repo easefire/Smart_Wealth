@@ -31,27 +31,34 @@ public enum ResultCode {
     // --- 👤 用户模块 (1000+) ---
     // 注册登录相关
     USER_NOT_EXIST(1001, "用户不存在"),
-    USER_ALREADY_EXIST(1002, "该手机号已注册"),
-    PASSWORD_ERROR(1003, "账号或密码错误"),
-    VERIFY_CODE_ERROR(1004, "验证码错误或已过期"),
+    USERNAME_ALREADY_EXIST(1002, "用户名已存在"),
+    PHONE_ALREADY_EXIST(1003, "该手机号已注册"),
+    PASSWORD_ERROR(1004, "账号或密码错误"),
+    USER_DELETED(1014, "账号已注销，无法登录"),
 
-    // 冻结逻辑
+    // 冻结删除逻辑
     USER_FROZEN(1005, "账号已被冻结，请联系客服"),
+    WALLET_NOT_EMPTY(1011, "账户余额不为零，无法注销"),
+    ORDER_NOT_CLOSED(1012, "存在未结清订单，无法注销"),
+    BANKCARD_BOUND(1013, "请先解绑银行卡，才能注销账户"),
 
     // 实名认证 (KYC)
     USER_NOT_KYC(1006, "请先完成实名认证"),
-    KYC_ALREADY_DONE(1007, "您已完成实名认证，无需重复提交"),
-    KYC_FAIL(1008, "实名认证失败，身份证信息有误"),
+    KYC_STATE_INVALID(1007, "实名认证状态异常，无法进行此操作"),
+    KYC_ALREADY_DONE(1008, "您已完成实名认证，无需重复提交"),
+    KYC_FAIL(1009, "实名认证失败，身份证信息有误"),
 
     // 风险测评
-    RISK_EVAL_NEEDED(1009, "请先完成风险测评"),
+    RISK_EVAL_NEEDED(1010, "请先完成风险测评"),
 
     // --- 📈 产品模块 (2000+) ---
     // 产品浏览与上下架
+    PRODUCT_SAVE_FAILURE(2000, "产品保存失败"),
     PRODUCT_NOT_EXIST(2001, "理财产品不存在"),
     PRODUCT_OFF_SHELF(2002, "该产品已下架"),
     PRODUCT_NOT_START(2003, "该产品尚未开始募集"),
     PRODUCT_SOLD_OUT(2004, "手慢了，该产品份额已售罄"),
+    INSUFFICIENT_PRODUCT_STOCK(2005, "产品可用份额不足"),
 
     // --- 🤝 交易模块 (3000+) ---
     // 买入逻辑
@@ -62,17 +69,22 @@ public enum ResultCode {
     RISK_LEVEL_MISMATCH(3003, "您的风险承受能力不足以购买此高风险产品"),
 
     // 赎回逻辑
+    PAYMENT_PASSWORD_ERROR(3007, "支付密码错误"),
     HOLDING_NOT_ENOUGH(3004, "可用持仓份额不足"),
     ORDER_STATUS_ERROR(3005, "订单状态异常，无法执行此操作"),
     CANNOT_REDEEM_LOCKED(3006, "产品处于封闭期，暂不可赎回"),
 
     // --- 💰 资金模块 (4000+) ---
     // 充值提现
-    BALANCE_NOT_ENOUGH(4001, "钱包余额不足"),
-    BANK_CARD_NOT_BIND(4002, "请先绑定银行卡"), //
-    BANK_CARD_ERROR(4003, "银行卡信息无效"),
-    DEPOSIT_FAIL(4004, "充值失败，银行端扣款异常"),
-    WITHDRAW_FAIL(4005, "提现失败，请检查账户状态"),
+    WALLET_NOT_EXIST(4001, "用户钱包不存在"),
+    PAY_PASSWORD_NOT_SET(4002, "请先设置支付密码"),
+    BALANCE_NOT_ENOUGH(4003, "钱包余额不足"),
+    BANK_CARD_NOT_BIND(4004, "请先绑定银行卡"), //
+    BANK_CARD_ERROR(4005, "银行卡信息无效"),
+    DEPOSIT_FAIL(4006, "充值失败，超出单日限额"),
+    WITHDRAW_FAIL(4007, "提现失败，请检查账户状态"),
+    WITHDRAW_LIMIT_EXCEEDED(4008, "超出单日提现限额"),
+    BANK_CARD_ALREADY_BINDED(4009, "该银行卡已绑定"),
 
     // --- 👮 管理员/系统模块 (5000+) ---
     // 管理员登录

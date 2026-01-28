@@ -2,4 +2,27 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smartwealth.asset.mapper.AssetWalletMapper">
 
+    <select id="getWalletByUserId" resultType="com.smartwealth.asset.entity.AssetWallet">
+        SELECT user_id, balance,frozen_amount, version,pay_password,update_time
+        FROM t_asset_wallet
+        WHERE user_id = #{userId}
+    </select>
+    <select id="getTotalWalletBalance" resultType="java.math.BigDecimal">
+        SELECT SUM(balance) AS total_balance
+        FROM t_asset_wallet
+    </select>
+    <select id="checkAssetSnapshotMismatch" resultType="com.smartwealth.asset.dto.AssetCheckDTO">
+        SELECT
+            w.user_id,
+            w.balance AS wallet_balance,        -- 钱包余额
+            f.balance_snapshot AS snapshot_balance -- 流水快照余额
+        FROM t_asset_wallet w
+                 -- 关联每个用户最新的一条流水
+                 LEFT JOIN t_asset_flow f ON w.user_id = f.user_id
+        WHERE f.id = (
+            SELECT MAX(id) FROM t_asset_flow WHERE user_id = w.user_id
+        )
+        -- 【核心】只有差额 > 0.01 的才会查出来，没问题的自动过滤
+        HAVING ABS(w.balance - f.balance_snapshot) > 0.01
+    </select>
 </mapper>

@@ -1,143 +1,77 @@
 package com.smartwealth.asset.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
+import com.smartwealth.asset.enums.TransactionTypeEnum;
+import lombok.Data;
+import lombok.ToString;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+
 /**
  * <p>
- * 资金流水表
+ * 资金交易流水表 - 记录所有余额变动凭证
  * </p>
  *
  * @author Gemini
- * @since 2026-01-12
+ * @since 2026-01-18
  */
-@TableName("t_asset_flow")
+@Data
+@ToString
+@TableName("t_asset_flow") // 建议与修改后的 SQL 表名保持一致
 public class AssetFlow implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * 主键 ID
+     */
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
     /**
-     * 唯一流水号
+     * 唯一业务流水号 (用于对账)
      */
     private String flowNo;
 
+    /**
+     * 关联用户 ID
+     */
     private Long userId;
 
     /**
-     * 关联业务单号
+     * 业务关联 ID (原 orderId)
+     * 充值存银行卡 ID, 申购/收益存订单 ID
      */
-    private Long orderId;
+    @TableField("biz_id")
+    private Long bizId;
 
     /**
-     * 金额(+/-)
+     * 变动金额 (+/-)
      */
     private BigDecimal amount;
 
     /**
-     * DEPOSIT, WITHDRAW, BUY, INCOME
+     * 交易类型
+     * RECHARGE-充值, WITHDRAW-提现, PURCHASE-申购, REDEEM-赎回, INCOME-收益
      */
-    private String type;
+    private TransactionTypeEnum type;
 
     /**
-     * 变动后余额
+     * 变动后余额快照 (核心审计字段)
      */
     private BigDecimal balanceSnapshot;
 
+    /**
+     * 业务备注 (如: 银行卡充值-尾号3456)
+     */
     private String remark;
 
+    /**
+     * 创建时间
+     */
+    @TableField(fill = FieldFill.INSERT) // 配合 MyMetaObjectHandler 实现自动填充
     private LocalDateTime createTime;
 
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getFlowNo() {
-        return flowNo;
-    }
-
-    public void setFlowNo(String flowNo) {
-        this.flowNo = flowNo;
-    }
-
-    public Long getUserId() {
-        return userId;
-    }
-
-    public void setUserId(Long userId) {
-        this.userId = userId;
-    }
-
-    public Long getOrderId() {
-        return orderId;
-    }
-
-    public void setOrderId(Long orderId) {
-        this.orderId = orderId;
-    }
-
-    public BigDecimal getAmount() {
-        return amount;
-    }
-
-    public void setAmount(BigDecimal amount) {
-        this.amount = amount;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    public BigDecimal getBalanceSnapshot() {
-        return balanceSnapshot;
-    }
-
-    public void setBalanceSnapshot(BigDecimal balanceSnapshot) {
-        this.balanceSnapshot = balanceSnapshot;
-    }
-
-    public String getRemark() {
-        return remark;
-    }
-
-    public void setRemark(String remark) {
-        this.remark = remark;
-    }
-
-    public LocalDateTime getCreateTime() {
-        return createTime;
-    }
-
-    public void setCreateTime(LocalDateTime createTime) {
-        this.createTime = createTime;
-    }
-
-    @Override
-    public String toString() {
-        return "AssetFlow{" +
-            "id = " + id +
-            ", flowNo = " + flowNo +
-            ", userId = " + userId +
-            ", orderId = " + orderId +
-            ", amount = " + amount +
-            ", type = " + type +
-            ", balanceSnapshot = " + balanceSnapshot +
-            ", remark = " + remark +
-            ", createTime = " + createTime +
-        "}";
-    }
 }

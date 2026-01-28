@@ -13,6 +13,9 @@
     <file url="file://$PROJECT_DIR$/sw-module-trade/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-module-user/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-module-user/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/sw-module-wealth/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/sw-module-wealth/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-web-start/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/sw-web-start/src/main/resources" charset="UTF-8" />
   </component>
 </project>

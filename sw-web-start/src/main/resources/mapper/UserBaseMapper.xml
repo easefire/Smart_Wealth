@@ -2,4 +2,22 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smartwealth.user.mapper.UserBaseMapper">
 
+    <select id="existsByUsernameIgnoreSelf" resultType="java.lang.Boolean">
+        SELECT
+            CASE WHEN COUNT(1) > 0 THEN TRUE ELSE FALSE END
+        FROM
+            t_user_base
+        WHERE
+            username = #{username}
+            AND id != #{userId}
+    </select>
+    <select id="existsByPhoneIgnoreSelf" resultType="java.lang.Boolean">
+        SELECT
+            CASE WHEN COUNT(1) > 0 THEN TRUE ELSE FALSE END
+        FROM
+            t_user_base
+        WHERE
+            phone = #{phone}
+            AND id != #{userId}
+    </select>
 </mapper>
