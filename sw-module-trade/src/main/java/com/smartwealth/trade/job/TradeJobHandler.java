@@ -82,8 +82,7 @@ public class TradeJobHandler {
                     error.getOrderIncome(),
                     error.getRealSumIncome());
 
-            // 面试加分项：你可以在这里加一行注释
-            // TODO: 发送钉钉/飞书报警给开发团队
+
         }
 
         log.info("========== 交易体检结束，发现 {} 个异常订单 ==========", errorList.size());
