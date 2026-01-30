@@ -6,7 +6,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smartwealth.asset.dto.AdminFlowQueryDTO;
-import com.smartwealth.asset.dto.FlowStatisticsVO;
+import com.smartwealth.asset.vo.FlowStatisticsVO;
 import com.smartwealth.asset.vo.AdminFlowVO;
 import com.smartwealth.asset.vo.AssetFlowVO;
 import com.smartwealth.asset.vo.ProductHeatmapVO;
@@ -61,7 +61,6 @@ public class AssetFlowServiceImpl extends ServiceImpl<AssetFlowMapper, AssetFlow
      * 支持按用户、产品、交易类型及时间范围过滤
      * 关键点在于批量拉取用户与产品信息，解决 N+1 查询问题
      */
-
     //获取平台流水分页
     @Override
     public Result<IPage<AdminFlowVO>> getPlatformFlowPage(AdminFlowQueryDTO query) {
@@ -180,8 +179,6 @@ public class AssetFlowServiceImpl extends ServiceImpl<AssetFlowMapper, AssetFlow
         // 5. 补全名称与计算净流入
         heatmapPage.getRecords().forEach(vo -> {
             vo.setProductName(prodNameMap.getOrDefault(vo.getProductId(), "未知产品"));
-
-            // 计算公式：$$NetInflow = TotalInflow - TotalOutflow$$
             vo.setNetInflow(vo.getTotalInflow().subtract(vo.getTotalOutflow())
                     .setScale(4, RoundingMode.HALF_UP));
         });

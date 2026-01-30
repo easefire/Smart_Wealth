@@ -30,7 +30,7 @@ public class AuditLogListener {
         // 将 DTO 转换为数据库 Entity
         AuditLog entity = new AuditLog();
         BeanUtils.copyProperties(dto, entity);
-        entity.setCreateTime(LocalDateTime.now());
+
 
         // 执行入库
         auditLogMapper.insert(entity);

@@ -34,8 +34,7 @@ public class AssetLocalMsgService {
         payload.put("reason", reason);
 
         message.setContent(JSON.toJSONString(payload));
-        message.setStatus(0); // 待发送 (让 Job 去发，或者也可以这里注册钩子发)
-        message.setCreateTime(LocalDateTime.now());
+        message.setStatus(0); // 待发送
 
         msgMapper.insert(message);
     }

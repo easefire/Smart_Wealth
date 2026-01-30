@@ -1,5 +1,7 @@
 package com.smartwealth.trade.vo;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.smartwealth.trade.enums.TradeStatusEnum;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;

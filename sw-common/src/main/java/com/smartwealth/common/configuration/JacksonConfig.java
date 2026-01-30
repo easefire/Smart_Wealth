@@ -14,7 +14,7 @@ public class JacksonConfig {
     @Primary
     public ObjectMapper objectMapper() {
         ObjectMapper om = new ObjectMapper();
-        // 1. 注册 Java 8 时间模块，解决 LocalDate 报错
+        // 1. 注册时间模块，解决 LocalDate 报错
         om.registerModule(new JavaTimeModule());
         // 2. 禁用“将日期序列化为时间戳”，使其以字符串格式存入 Redis
         om.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);

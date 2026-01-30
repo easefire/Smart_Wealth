@@ -7,7 +7,7 @@ import lombok.Data;
 
 @Data
 @Schema(description = "设置支付密码请求对象")
-public class PayPasswordRequest {
+public class PayPasswordRequestDTO {
 
     @Schema(description = "支付密码", example = "123456", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "支付密码不能为空")

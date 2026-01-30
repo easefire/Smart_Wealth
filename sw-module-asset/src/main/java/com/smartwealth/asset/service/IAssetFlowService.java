@@ -3,7 +3,7 @@ package com.smartwealth.asset.service;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smartwealth.asset.dto.AdminFlowQueryDTO;
-import com.smartwealth.asset.dto.FlowStatisticsVO;
+import com.smartwealth.asset.vo.FlowStatisticsVO;
 import com.smartwealth.asset.vo.AdminFlowVO;
 import com.smartwealth.asset.vo.AssetFlowVO;
 import com.smartwealth.asset.vo.ProductHeatmapVO;

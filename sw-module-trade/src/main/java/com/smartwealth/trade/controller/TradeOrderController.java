@@ -2,6 +2,7 @@ package com.smartwealth.trade.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.smartwealth.common.annotations.NoRepeatSubmit;
 import com.smartwealth.common.context.UserContext;
 import com.smartwealth.common.result.Result;
 import com.smartwealth.trade.dto.PurchaseDTO;
@@ -14,6 +15,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -27,6 +29,7 @@ import org.springframework.web.bind.annotation.*;
 @Tag(name = "用户端-产品交易")
 @RestController
 @RequestMapping("sw/user/trade")
+@PreAuthorize("hasRole('USER')")
 public class TradeOrderController {
 
     @Autowired
@@ -34,6 +37,7 @@ public class TradeOrderController {
 
     @Operation(summary = "申购理财产品")
     @PostMapping("/purchase")
+    @NoRepeatSubmit(lockTime = 3) // 防重复提交，锁定 3 秒
     public Result<String> purchase(@Valid @RequestBody PurchaseDTO dto) {
         Long userId = UserContext.getUserId(); // 从上下文获取用户ID
         return tradeOrderService.purchase(userId, dto);
@@ -59,20 +63,18 @@ public class TradeOrderController {
         }
         // 2. 从上下文获取当前登录用户 ID
         Long userId = UserContext.getUserId();
-
         // 3. 调用 Service 执行分页查询并返回结果
         Page<OrderHistoryVO> result = tradeOrderService.getOrderHistory(userId, current, size);
-
         return Result.success(result);
     }
 
     @Operation(summary = "按产品批量赎回")
     @PostMapping("/redeem")
+    @NoRepeatSubmit(lockTime = 3)
     public Result<String> redeemByProduct(@Valid @RequestBody RedemptionDTO dto) {
         // 1. 从安全上下文获取当前用户 ID
         Long userId = UserContext.getUserId();
         // 2. 调用 Service 执行 FIFO 核销逻辑
-        // 内部涉及：多笔订单筛选、到期校验、份额扣减、资产入账
         return tradeOrderService.redeemByProduct(userId, dto);
     }
 

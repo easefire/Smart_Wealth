@@ -120,7 +120,6 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
             order.setProdNameSnap(prod.getBaseInfo().getName());
             order.setRateSnap(prod.getBaseInfo().getLatestRate());
             order.setStatus(TradeStatusEnum.PENDING);
-            order.setCreateTime(LocalDateTime.now());
             order.setExpireTime(LocalDateTime.now().plusDays(prod.getBaseInfo().getCycle()));
 
             this.save(order);
@@ -131,14 +130,13 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
             msg.setTopic("ex.trade.purchase");
             msg.setStatus(0);
             msg.setRetryCount(0);
-            msg.setNextRetry(LocalDateTime.now());
-            msg.setCreateTime(LocalDateTime.now());
 
             Map<String, Object> payload = new HashMap<>();
             payload.put("userId", userId);
             payload.put("amount", dto.getAmount());
             payload.put("share", quantity);
             payload.put("orderId", order.getId());
+            payload.put("productId", dto.getProductId());
             payload.put("payPassword", dto.getPayPassword());
             msg.setContent(JSON.toJSONString(payload));
 
@@ -193,6 +191,7 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
                 vo.setMarketValue(marketValue);
                 vo.setProfit(marketValue.subtract(order.getAmount()));
                 vo.setCurrentNav(prod.getCurrentNav());
+                vo.setCreateTime(order.getCreateTime());
             }
             return vo;
         });
@@ -259,8 +258,8 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
             // 2. 【核心修改】将本金扣减额也记录到明细中！
             Map<String, Object> detail = new HashMap<>();
             detail.put("orderId", order.getId());
-            detail.put("amount", canRedeem);      // 告诉消费者扣多少份额
-            detail.put("principal", costReduction); // 👈【新增】告诉消费者扣多少本金！
+            detail.put("amount", canRedeem);
+            detail.put("principal", costReduction);
             freezeDetails.add(detail);
 
             // 3. 计算收益 (保持原样)
@@ -392,7 +391,6 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
             vo.setQuantity(order.getQuantity());
             vo.setAccumulatedIncome(order.getAccumulatedIncome());
             vo.setStatus(order.getStatus());
-            vo.setCreateTime(order.getCreateTime());
             return vo;
         });
 
@@ -634,7 +632,6 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
                 profitLog.setDailyProfit(dailyProfitAmt);
                 profitLog.setProfitDate(bizDate);
                 profitLog.setType(1); // 假设 1 代表"净值收益"
-                profitLog.setCreateTime(LocalDateTime.now());
 
                 profitInsertList.add(profitLog);
 

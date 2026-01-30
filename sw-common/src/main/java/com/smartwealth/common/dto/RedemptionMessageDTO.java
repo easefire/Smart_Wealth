@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.math.BigDecimal;
 
@@ -17,10 +18,11 @@ import java.math.BigDecimal;
 @NoArgsConstructor
 public class RedemptionMessageDTO implements Serializable {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     /**
-     * 交易模块的订单ID (核心：用于幂等校验)
+     * 订单ID
      */
     private Long requestId;
 
@@ -44,10 +46,10 @@ public class RedemptionMessageDTO implements Serializable {
      */
     private BigDecimal share;
 
-
+    /**
+     * 收益金额
+     */
     private BigDecimal profit;
-
-
     /**
      * 备注信息
      */

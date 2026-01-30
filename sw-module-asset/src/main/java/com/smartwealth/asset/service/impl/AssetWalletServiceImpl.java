@@ -141,7 +141,6 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
         flow.setType(TransactionTypeEnum.RECHARGE); // RECHARGE 类型
         flow.setBalanceSnapshot(newBalance); // 变动后余额快照
         flow.setRemark("银行卡充值-" + card.getBankName());
-        flow.setCreateTime(LocalDateTime.now());
 
         assetFlowMapper.insert(flow);
 
@@ -163,8 +162,6 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
         // 设置初始状态和重试参数
         message.setStatus(1);
         message.setRetryCount(0);
-        message.setNextRetry(LocalDateTime.now());
-        message.setCreateTime(LocalDateTime.now());
 
         // 存入数据库
         assetLocalMsgMapper.insert(message);
@@ -252,8 +249,6 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
         // 设置初始状态
         message.setStatus(1); // 0-待处理
         message.setRetryCount(0);
-        message.setNextRetry(LocalDateTime.now());
-        message.setCreateTime(LocalDateTime.now());
 
         // 存入资产模块本地消息表
         assetLocalMsgMapper.insert(message);

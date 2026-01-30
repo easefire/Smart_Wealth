@@ -13,12 +13,15 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -26,48 +29,51 @@ import java.util.concurrent.TimeUnit;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Autowired
-    private RedisService redisService; // 注入你刚封装好的 RedisService
+    private RedisService redisService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException, java.io.IOException {
+        // 从请求头中获取 JWT Token
         String token = request.getHeader("Authorization");
-
+        // 去除 "Bearer " 前缀
         if (StringUtils.hasText(token) && token.startsWith("Bearer ")) {
             token = token.substring(7);
         }
-
+        // 验证 Token 有效性
         if (StringUtils.hasText(token)) {
             try {
                 Claims claims = JwtUtils.parseToken(token);
                 if (claims != null) {
                     Long userId = Long.valueOf(claims.getSubject());
                     String role = claims.get("role", String.class);
-                    String redisKey=new String();
-
-                    if(role.equals("ADMIN")) {
+                    String redisKey;
+                    if (role.equals("ADMIN")) {
                         redisKey = String.format(RedisKeyConstants.ADMIN_TOKEN, userId);
-                    }else if(role.equals("USER")) {
+                    } else if (role.equals("USER")) {
                         redisKey = String.format(RedisKeyConstants.USER_TOKEN, userId);
-                    }else
+                    } else
                         throw new IllegalArgumentException("未知的用户角色");
-
                     // 从 Redis 获取该用户当前合法的 Token
                     String cachedToken = (String) redisService.get(redisKey);
-                    // 判断：Redis 里没值（已登出）或者 Token 不匹配（被顶下线）
                     if (StringUtils.hasText(cachedToken) && cachedToken.equals(token)) {
                         Long ttl = redisService.getExpire(redisKey);
-                        if (ttl != null && ttl < 15 * 60) { // 剩余不足 15 分钟
+                        // 如果剩余有效期少于 15 分钟，则续期至 30 分钟
+                        if (ttl != null && ttl < 15 * 60) {
                             redisService.expire(redisKey, 30, TimeUnit.MINUTES);
                         }
-                        // 只有 Redis 校验通过，才填充上下文
+                        // 构建 Authentication 对象并存入 SecurityContext
+                        String authorityRole = "ROLE_" + role;
+                        List<SimpleGrantedAuthority> authorities =
+                                Collections.singletonList(new SimpleGrantedAuthority(authorityRole));
+                        // 将用户信息存入 UserContext
                         UserContext.set(userId, role);
+                        // 构建 Authentication 对象
                         UsernamePasswordAuthenticationToken authentication =
-                                new UsernamePasswordAuthenticationToken(userId, null, new ArrayList<>());
+                                new UsernamePasswordAuthenticationToken(userId, null, authorities);
                         SecurityContextHolder.getContext().setAuthentication(authentication);
                     } else {
-                        // 如果 Redis 校验失败，不设置 SecurityContext，请求后续会被安全模块拦截
                         log.warn("用户 {} 的 Token 已失效或已登出", userId);
                     }
                 }
@@ -75,7 +81,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 log.error("JWT 认证失败: {}", e.getMessage());
             }
         }
-
         try {
             filterChain.doFilter(request, response);
         } finally {

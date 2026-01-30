@@ -17,6 +17,5 @@
             remark
         FROM t_asset_flow
         WHERE type = 'PURCHASE' -- 只查买入的，用来算总投入
-        -- AND create_time >= ... (如果是每日增量对账，记得加时间)
     </select>
 </mapper>

@@ -3,7 +3,7 @@ package com.smartwealth.asset.controller.admin;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.smartwealth.asset.dto.AdminFlowQueryDTO;
-import com.smartwealth.asset.dto.FlowStatisticsVO;
+import com.smartwealth.asset.vo.FlowStatisticsVO;
 import com.smartwealth.asset.vo.AdminFlowVO;
 import com.smartwealth.asset.vo.ProductHeatmapVO;
 import com.smartwealth.asset.service.IAssetFlowService;
@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/sw/admin/asset")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("hasRole('ADMIN')")
 public class AssetController {
 
     @Autowired

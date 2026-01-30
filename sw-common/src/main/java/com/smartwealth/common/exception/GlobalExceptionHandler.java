@@ -20,7 +20,7 @@ import java.util.Objects;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     /**
-     * 1. 拦截业务异常 (最常用)
+     * 1. 拦截业务异常
      * 场景：代码中手动 throw new BusinessException(ResultCode.USER_FROZEN);
      */
     @ExceptionHandler(BusinessException.class)
@@ -29,23 +29,19 @@ public class GlobalExceptionHandler {
         log.warn("业务异常: code={}, msg={}", e.getCode(), e.getMessage());
         return Result.fail(e.getCode(), e.getMessage());
     }
-
     /**
-     * 2. 拦截参数校验异常 (Validation)
+     * 2. 拦截参数校验异常
      * 场景：DTO 里的 @NotNull, @Size 校验失败时
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public Result<?> handleValidationException(MethodArgumentNotValidException e) {
         BindingResult bindingResult = e.getBindingResult();
-        // 获取第一条错误信息 (比如 "手机号不能为空")
         String msg = Objects.requireNonNull(bindingResult.getFieldError()).getDefaultMessage();
-
         log.warn("参数校验失败: {}", msg);
         return Result.fail(ResultCode.PARAM_ERROR.getCode(), msg);
     }
-
     /**
-     * 2.1 拦截另一种参数异常 (通常是 Get 请求参数绑定失败)
+     * 2.1 拦截另一种参数异常
      */
     @ExceptionHandler(BindException.class)
     public Result<?> handleBindException(BindException e) {
@@ -53,22 +49,17 @@ public class GlobalExceptionHandler {
         log.warn("参数绑定失败: {}", msg);
         return Result.fail(ResultCode.PARAM_ERROR.getCode(), msg);
     }
-
     /**
-     * 3. 拦截所有未知的系统异常 (兜底)
+     * 3. 拦截所有未知的系统异常
      * 场景：NullPointerException, IndexOutOfBoundsException, SQL报错等
      */
     @ExceptionHandler(Exception.class)
     public Result<?> handleException(Exception e) {
-        // 🚨 系统异常必须打印完整堆栈 (error)，方便排查 BUG
         log.error("系统发生未知错误", e);
-
-        // 返回模糊的错误提示，不要把 "NullPoint..." 直接展示给用户看，不安全也不友好
         return Result.fail(ResultCode.FAILURE);
     }
     @ExceptionHandler(NoResourceFoundException.class)
     public void handleNoResourceFoundException(NoResourceFoundException e) {
-        // 仅仅记录 debug 日志，或者干脆什么都不做
         log.debug("静态资源未找到: {}", e.getResourcePath());
     }
 }

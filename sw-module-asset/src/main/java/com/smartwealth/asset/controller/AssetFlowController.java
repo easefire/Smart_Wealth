@@ -8,6 +8,7 @@ import com.smartwealth.common.result.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/sw/user/asset-flow")
 @RequiredArgsConstructor
 @Validated
+@PreAuthorize("hasRole('USER')")
 public class AssetFlowController {
 
     private final IAssetFlowService assetService;
@@ -32,16 +34,12 @@ public class AssetFlowController {
             @RequestParam(value = "current", defaultValue = "1") Integer current,
             @RequestParam(value = "size", defaultValue = "10") Integer size,
             @RequestParam(value = "type", required = false) String type) {
-
-        // 1. 参数校验
+        // 1. 参数校验与限制
         if (size > 100) size = 100;
-
         // 2. 获取当前用户 ID
         Long userId = UserContext.getUserId();
-
         // 3. 执行查询
         Page<AssetFlowVO> result = assetService.getUserFlowPage(userId, current, size, type);
-
         return Result.success(result);
     }
 

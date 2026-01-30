@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,6 +21,7 @@ import java.util.List;
 @Tag(name = "管理端-产品管理")
 @RestController
 @RequestMapping("/sw/admin/product")
+@PreAuthorize("hasRole('ADMIN')")
 public class Productcontroller {
     @Autowired
     private IProdInfoService productService;
@@ -53,9 +55,8 @@ public class Productcontroller {
     @Operation(summary = "获取产品详情画像")
     @GetMapping("/info/{prodId}")
     public Result<ProductDetailVO> getProductDetail(
-            @PathVariable Long prodId,
+            @PathVariable("prodId") Long prodId,
             @RequestParam(value = "days", defaultValue = "7") Integer days) {
-
         // 调用业务层获取聚合后的对象
         ProductDetailVO detail = productService.getProductDetail(prodId, days);
 

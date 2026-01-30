@@ -63,6 +63,7 @@ public class TradeOrder implements Serializable {
      */
     private TradeStatusEnum status;
 
+    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 
     /**

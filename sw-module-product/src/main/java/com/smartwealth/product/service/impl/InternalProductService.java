@@ -57,10 +57,10 @@ public class InternalProductService {
     @Transactional(rollbackFor = Exception.class)
     public void lockStock(Long id, BigDecimal quantity) {
         String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
-        long num = quantity.longValue();
+
 
         // 1. 第一步：Redis 预扣
-        Long result = redisService.executeStockLua(stockKey, quantity);
+        Long result = redisService.executeStock(stockKey, quantity);
 
         if (result == -1) {
             log.warn("产品 {} 缓存失效，触发同步", id);
@@ -84,7 +84,7 @@ public class InternalProductService {
 
         if (rows == 0) {
             // Redis 扣减成功但 DB 扣减失败，执行回滚补偿
-            redisService.incrementStock(stockKey, num);
+            redisService.incrementStock(stockKey, quantity);
             log.error("产品 {} Redis 扣减成功但 DB 扣减失败，执行回滚补偿", id);
             throw new BusinessException("产品已被抢购空，请重试");
         }
@@ -99,10 +99,8 @@ public class InternalProductService {
 
         // 2. Redis 份额回补
         String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
-        BigDecimal scale = new BigDecimal("1000000");
-        long scaledAmount = quantity.multiply(scale).setScale(0, RoundingMode.HALF_UP).longValue();
 
-        Long result = redisService.incrementStock(stockKey, scaledAmount);
+        Long result = redisService.incrementStock(stockKey, quantity);
 
         if (result == null || result < 0) {
             log.warn("Redis 库存回补异常，触发手动同步。Key: {}", stockKey);

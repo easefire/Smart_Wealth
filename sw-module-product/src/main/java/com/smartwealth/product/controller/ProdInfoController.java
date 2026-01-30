@@ -8,6 +8,7 @@ import com.smartwealth.product.service.IProdInfoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,6 +24,7 @@ import java.util.List;
 @Tag(name = "用户端-产品信息")
 @RestController
 @RequestMapping("/sw/user/product")
+@PreAuthorize("hasRole('USER')")
 public class ProdInfoController {
     @Autowired
     private IProdInfoService productService;

@@ -1,5 +1,7 @@
 package com.smartwealth.user.vo;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.smartwealth.user.entity.UserBase;
 import com.smartwealth.user.enums.UserStatusEnum;
 import lombok.Data;
@@ -22,7 +24,6 @@ public class AdminUserVO {
         vo.setStatus(user.getStatus());
         vo.setCreateTime(user.getCreateTime());
 
-        // 手机号脱敏逻辑
         if (user.getPhone() != null && user.getPhone().length() == 11) {
             vo.setPhone(user.getPhone().replaceAll("(\\d{3})\\d{4}(\\d{4})", "$1****$2"));
         }

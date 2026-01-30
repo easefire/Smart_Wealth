@@ -1,7 +1,7 @@
 package com.smartwealth.asset.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.smartwealth.common.baseentity.BaseLocalMessage;
+import com.smartwealth.common.entity.BaseLocalMessage;
 import lombok.Data;
 
 @Data

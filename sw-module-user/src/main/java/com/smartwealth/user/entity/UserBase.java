@@ -1,10 +1,8 @@
 package com.smartwealth.user.entity;
 
-import com.baomidou.mybatisplus.annotation.EnumValue;
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
 import com.smartwealth.user.enums.UserStatusEnum;
+import lombok.Data;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -16,6 +14,7 @@ import java.time.LocalDateTime;
  * @author Gemini
  * @since 2026-01-12
  */
+@Data
 @TableName("t_user_base")
 public class UserBase implements Serializable {
 
@@ -57,83 +56,9 @@ public class UserBase implements Serializable {
      */
     private UserStatusEnum status;
 
+    /**
+     * 注册时间
+     */
+    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public String getPhone() {
-        return phone;
-    }
-
-    public void setPhone(String phone) {
-        this.phone = phone;
-    }
-
-    public String getRealName() {
-        return realName;
-    }
-
-    public void setRealName(String realName) {
-        this.realName = realName;
-    }
-
-    public String getIdCard() {
-        return idCard;
-    }
-
-    public void setIdCard(String idCard) {
-        this.idCard = idCard;
-    }
-
-    public Byte getRiskLevel() {
-        return riskLevel;
-    }
-
-    public void setRiskLevel(Byte riskLevel) {
-        this.riskLevel = riskLevel;
-    }
-
-    public UserStatusEnum getStatus() {
-        return status;
-    }
-
-    public void setStatus(UserStatusEnum status) {
-        this.status = status;
-    }
-
-    public LocalDateTime getCreateTime() {
-        return createTime;
-    }
-
-    public void setCreateTime(LocalDateTime createTime) {
-        this.createTime = createTime;
-    }
-
-    @Override
-    public String toString() {
-        return "UserBase{" +
-            "id = " + id +
-            ", username = " + username +
-            ", phone = " + phone +
-            ", realName = " + realName +
-            ", idCard = " + idCard +
-            ", riskLevel = " + riskLevel +
-            ", status = " + status +
-            ", createTime = " + createTime +
-        "}";
-    }
 }

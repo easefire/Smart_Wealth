@@ -1,4 +1,4 @@
-package com.smartwealth.asset.dto;
+package com.smartwealth.asset.vo;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;

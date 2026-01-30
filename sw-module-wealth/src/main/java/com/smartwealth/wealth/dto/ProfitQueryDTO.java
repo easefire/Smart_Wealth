@@ -30,7 +30,7 @@ public class ProfitQueryDTO {
     @DateTimeFormat(pattern = "yyyy-MM-dd")
     private LocalDate startDate;
 
-    @Schema(description = "结束日期", example = "2026-01-18")
+    @Schema(description = "结束日期", example = "2026-01-29")
     @DateTimeFormat(pattern = "yyyy-MM-dd")
     private LocalDate endDate;
 }

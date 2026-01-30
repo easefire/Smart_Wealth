@@ -1,5 +1,7 @@
 package com.smartwealth.trade.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -25,6 +27,6 @@ public class DailyProfit {
      * 2: 赎回收益 (由赎回动作触发)
      */
     private Integer type;
-
+    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 }

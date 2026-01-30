@@ -2,7 +2,9 @@ package com.smartwealth.common.event;
 
 import com.smartwealth.common.dto.AuditLogDTO;
 import org.springframework.context.ApplicationEvent;
-
+/**
+ * 审计日志事件
+ */
 public class AuditLogEvent extends ApplicationEvent {
     private final AuditLogDTO logDTO;
 

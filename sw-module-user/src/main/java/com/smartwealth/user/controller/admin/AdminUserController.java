@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,12 +24,14 @@ import java.time.LocalDate;
 @RequestMapping("/sw/admin/user")
 @Slf4j
 @Tag(name = "管理端-用户管理")
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminUserController {
     @Autowired
     private IAdminService adminService;
 
     @Operation(summary = "管理员注册")
     @PostMapping("/register")
+    @PreAuthorize("permitAll()")
     public Result<String> register(@Validated @RequestBody UserLoginDTO registerDto) {
         log.info("管理员注册开始，用户名: {}", registerDto.getUsername());
         adminService.register(registerDto);
@@ -37,6 +40,7 @@ public class AdminUserController {
 
     @Operation(summary = "管理员登录")
     @PostMapping("/login")
+    @PreAuthorize("permitAll()")
     public Result<String> login(@Validated @RequestBody UserLoginDTO dto) {
         String token = adminService.login(dto);
         return Result.success(token);
@@ -65,7 +69,6 @@ public class AdminUserController {
     public Result<IPage<AdminUserVO>> getUserPage(
             @RequestParam(value = "current", defaultValue = "1") int current,
             @RequestParam(value = "size", defaultValue = "10") int size) {
-
         IPage<AdminUserVO> result = adminService.listUsersForAdmin(current, size);
         return Result.success(result);
     }

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "管理端-交易管理")
 @RestController
 @RequestMapping("sw/admin/trade")
+@PreAuthorize("hasRole('ADMIN')")
 public class TradeController {
 
     @Autowired

@@ -2,7 +2,9 @@ package com.smartwealth.common.dto;
 
 import lombok.Data;
 
-// 1. 定义 DTO (放在 common 模块)
+/**
+ * 审计日志传输对象
+ */
 @Data
 public class AuditLogDTO {
     private Long adminId;

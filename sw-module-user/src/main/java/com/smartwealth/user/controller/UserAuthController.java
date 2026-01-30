@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/sw/user/auth")
 @Slf4j
 @Tag(name = "用户端-用户认证")
+@PreAuthorize("hasRole('USER')")
 public class UserAuthController {
 
     @Autowired
@@ -33,6 +35,7 @@ public class UserAuthController {
 
     @Operation(summary = "用户注册")
     @PostMapping("/register")
+    @PreAuthorize("permitAll()")
     public Result<UserVO> register(@Validated @RequestBody UserRegisterDTO registerDto) {
         log.info("用户注册开始，用户名: {}", registerDto.getUsername());
         UserVO userVo = authService.register(registerDto);
@@ -41,6 +44,7 @@ public class UserAuthController {
 
     @Operation(summary = "用户登录")
     @PostMapping("/login")
+    @PreAuthorize("permitAll()")
     public Result<String> login(@Validated @RequestBody UserLoginDTO dto) {
         String token = authService.login(dto);
         return Result.success(token);

@@ -81,11 +81,21 @@ public class InternalAssetService {
     }
 
     // 检查该订单是否已经处理过 [cite: 2026-01-24]
-    public boolean isProcessed(Long orderId,TransactionTypeEnum type) {
-        // 根据 bizId（订单号）和类型查询流水，如果已存在则说明扣过款了
+    public boolean isProcessed(Long orderId, TransactionTypeEnum type) {
+        // 1. 根据类型构造出当时存进去的 flow_no
+        String targetFlowNo;
+        if (type == TransactionTypeEnum.PURCHASE) {
+            targetFlowNo = "PURC" + orderId;
+        } else if (type == TransactionTypeEnum.REDEEM) {
+            targetFlowNo = "REDE" + orderId; // 这里 orderId 其实传的是 requestId
+        } else {
+            return false;
+        }
+
+        // 2. 直接查 flow_no 是否存在
+        // 因为 flow_no 是唯一的，只要查到了，说明这笔单子肯定处理过了
         return flowMapper.selectCount(new LambdaQueryWrapper<AssetFlow>()
-                .eq(AssetFlow::getBizId, orderId)
-                .eq(AssetFlow::getType, type)) > 0;
+                .eq(AssetFlow::getFlowNo, targetFlowNo)) > 0;
     }
     @Transactional(rollbackFor = Exception.class)
     public void deductForPurchase(PurchaseMessageDTO msg) {
@@ -93,6 +103,7 @@ public class InternalAssetService {
         BigDecimal amount = msg.getAmount();
         BigDecimal share = msg.getShare();
         Long orderId = msg.getOrderId();
+        Long productId = msg.getProductId();
 
         // 1. 【核心新增】幂等校验：绝对不允许对同一个 orderId 重复扣款 [cite: 2026-01-24]
         if (this.isProcessed(orderId, TransactionTypeEnum.PURCHASE)) {
@@ -131,7 +142,7 @@ public class InternalAssetService {
             AssetFlow flow = new AssetFlow();
             flow.setFlowNo("PURC" + orderId); // 使用订单号生成流水号，进一步增强唯一性 [cite: 2026-01-24]
             flow.setUserId(userId);
-            flow.setBizId(orderId); // 这里改为存储 Trade 模块的订单 ID
+            flow.setBizId(productId);
             flow.setAmount(amount.negate());
             flow.setType(TransactionTypeEnum.PURCHASE);
             flow.setBalanceSnapshot(wallet.getBalance().subtract(amount));
@@ -148,19 +159,14 @@ public class InternalAssetService {
                         // B. 发送成功，更新本地消息状态为 1 (SUCCESS)
                         localMsgService.updateStatusSuccess(localMsg.getId());
                     } catch (Exception e) {
-                        // ======================== 失败处理逻辑 START ========================
                         log.warn("业务扣款失败: {}", e.getMessage());
-
-                        // A. 手动回滚当前事务 (撤销刚才可能做了一半的 update)
                         TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-
                         // B. 【独立事务】保存“失败”消息到本地表
                         // 必须用 REQUIRES_NEW，否则会被上面的 setRollbackOnly 带着一起回滚！
                         localMsgService.saveFailMsgInNewTx(orderId, "MSG_PURC_RES_", e.getMessage());
 
                         // C. 抛出异常，通知外层 Listener 这是个业务失败 (Listener 会捕获并 ACK)
                         throw e;
-                        // ======================== 失败处理逻辑 END ========================
                     }
                 }
             });
@@ -168,9 +174,6 @@ public class InternalAssetService {
             saveResultLocalMsg(orderId,"MSG_PURC_RES_","FAIL", e.getMessage());
             throw e;
         }
-
-        // 7. 【关键新增】发送回执消息给 Trade 模块，通知扣款成功 [cite: 2026-01-24]
-        // 这一步建议放在事务提交后，或者利用本地消息表发回执
     }
     private AssetLocalMsg saveResultLocalMsg(Long orderId,String type, String status,String reason) {
         AssetLocalMsg message = new AssetLocalMsg();
@@ -184,7 +187,6 @@ public class InternalAssetService {
 
         message.setContent(JSON.toJSONString(payload));
         message.setStatus(0); // 待发送
-        message.setCreateTime(LocalDateTime.now());
         assetLocalMsgMapper.insert(message);
 
         return message;
@@ -198,14 +200,13 @@ public class InternalAssetService {
         BigDecimal amount = dto.getAmount();
         BigDecimal profit = dto.getProfit();
         BigDecimal share = dto.getShare();
-        Long orderId = dto.getRequestId(); // 赎回记录ID
+        Long requestId = dto.getRequestId(); // 赎回记录ID
 
-        // 1. 幂等校验
-        // 注意：如果已处理，是否需要补发一次回执？(视业务严格程度而定，简单版直接 return)
-        if (this.isProcessed(orderId, TransactionTypeEnum.REDEEM)) {
-            log.warn("订单 {} 赎回已处理，跳过重复入账", orderId);
+        if (this.isProcessed(requestId, TransactionTypeEnum.PURCHASE)) {
+            log.warn("订单 {} 已扣款成功，忽略重复请求", requestId);
             return;
         }
+
 
         try {
             // 2. 锁定钱包
@@ -224,24 +225,20 @@ public class InternalAssetService {
 
             // 4.1 本金流水
             if (principal.compareTo(BigDecimal.ZERO) > 0) {
-                saveFlow(userId, dto.getProductId(), TransactionTypeEnum.REDEEM, principal,
+                saveFlow(userId,requestId, dto.getProductId(), TransactionTypeEnum.REDEEM, principal,
                         wallet.getBalance().subtract(profit),
-                        // 【重点】格式要配合正则对账：订单号：xxx 份额：xxx
-                        "理财赎回-本金退回，订单号：" + orderId + " 份额：" + share);
+                        "理财赎回-本金退回，订单号：" + requestId + " 份额：" + share);
             }
 
             // 4.2 收益流水
             if (profit.compareTo(BigDecimal.ZERO) != 0) {
-                saveFlow(userId, dto.getProductId(), TransactionTypeEnum.INCOME, profit,
+                saveFlow(userId,requestId, dto.getProductId(), TransactionTypeEnum.INCOME, profit,
                         wallet.getBalance(),
-                        // 【重点】备注格式保持一致，方便正则提取
-                        "理财赎回-溢价收益，订单号：" + orderId + " 份额：0"); // 份额通常只记一次，或者按比例拆分，这里写0防止重复统计
+                        "理财赎回-溢价收益，订单号：" + requestId + " 份额：0"); // 份额通常只记一次，或者按比例拆分，这里写0防止重复统计
             }
 
-            // ======================== 新增核心逻辑 START ========================
-
             // 6. 保存本地消息 (状态=0)
-            AssetLocalMsg localMsg = saveResultLocalMsg(orderId, "MSG_REED_RES", "SUCCESS", null);
+            AssetLocalMsg localMsg = saveResultLocalMsg(requestId, "MSG_REED_RES", "SUCCESS", null);
 
             // 7. 注册钩子：事务提交后立马发
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronizationAdapter() {
@@ -249,11 +246,11 @@ public class InternalAssetService {
                 public void afterCommit() {
                     try {
                         // A. 发送 MQ 给 Trade 端
-                        assetResultProducer.sendResult(orderId, "REDEEM", true, "SUCCESS");
+                        assetResultProducer.sendResult(requestId, "REDEEM", true, "SUCCESS");
                         // B. 更新本地消息状态为 1
                         localMsgService.updateStatusSuccess(localMsg.getId());
                     } catch (Exception e) {
-                        log.error("赎回回执即时发送失败，等待 Job 兜底: {}", orderId, e);
+                        log.error("赎回回执即时发送失败，等待 Job 兜底: {}", requestId, e);
                     }
                 }
             });
@@ -268,7 +265,7 @@ public class InternalAssetService {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
 
             // B. 独立事务保存失败消息
-            localMsgService.saveFailMsgInNewTx(orderId, "MSG_REED_RES", e.getMessage());
+            localMsgService.saveFailMsgInNewTx(requestId, "MSG_REED_RES", e.getMessage());
 
             // C. 抛出异常让 Listener 感知并 ACK
             throw e;
@@ -276,16 +273,15 @@ public class InternalAssetService {
         }
     }
     // 保存资金流水的私有方法
-    private void saveFlow(Long userId, Long bizId, TransactionTypeEnum type, BigDecimal amount, BigDecimal snapshot, String remark) {
+    private void saveFlow(Long userId,Long requestId, Long bizId, TransactionTypeEnum type, BigDecimal amount, BigDecimal snapshot, String remark) {
         AssetFlow flow = new AssetFlow();
-        flow.setFlowNo("REDE" + System.currentTimeMillis());
+        flow.setFlowNo("REDE" + requestId); // 使用赎回记录ID生成流水号
         flow.setUserId(userId);
         flow.setBizId(bizId); // 关联产品ID，消除 <null>
         flow.setAmount(amount);
         flow.setType(type);
         flow.setBalanceSnapshot(snapshot);
         flow.setRemark(remark);
-        flow.setCreateTime(LocalDateTime.now()); // 记录收益发生的精确时间
         flowMapper.insert(flow);
     }
 

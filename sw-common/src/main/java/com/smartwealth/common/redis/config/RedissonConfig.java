@@ -11,10 +11,10 @@ public class RedissonConfig {
     @Bean
     public RedissonClient redissonClient() {
         Config config = new Config();
-        // 这里根据你的 Redis 地址配置
+        // 单机模式配置
         config.useSingleServer()
                 .setAddress("redis://127.0.0.1:6379")
-                .setPassword("923827"); // 如果有密码，设置密码
+                .setPassword("923827");
         return Redisson.create(config);
     }
 }
