@@ -5,6 +5,8 @@
     <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-common/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-common/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/sw-module-agent/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/sw-module-agent/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-module-asset/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-module-asset/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/sw-module-product/src/main/java" charset="UTF-8" />
