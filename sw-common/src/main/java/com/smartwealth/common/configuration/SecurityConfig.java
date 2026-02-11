@@ -1,6 +1,9 @@
 package com.smartwealth.common.configuration;
 
+import com.smartwealth.common.filter.InternalServiceFilter;
 import com.smartwealth.common.filter.JwtAuthenticationFilter;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,13 +16,15 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-
+@Slf4j
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfig {
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    @Autowired
+    private InternalServiceFilter internalServiceFilter;
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -28,34 +33,33 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                // 1. 禁用 CSRF (前后端分离 JWT 模式通常不需要)
                 .csrf(AbstractHttpConfigurer::disable)
-                // 2. 设置 Session 策略为无状态 (STATELESS)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                // 3. 请求授权规则配置
                 .authorizeHttpRequests(auth -> auth
-                        // --- 放行 Knife4j / Swagger 文档资源 ---
-                        // doc.html 是页面，webjars 是静态资源(js/css)，v3/api-docs 是后端生成的接口文档 JSON
-                        .requestMatchers(
-                                "/doc.html",
-                                "/webjars/**",
-                                "/v3/api-docs/**",
-                                "/swagger-resources/**",
-                                "/favicon.ico"
-                        ).permitAll()
-                        // --- 放行 认证相关接口 ---
-                        // 注册和登录接口允许匿名访问
-                        .requestMatchers(
-                                "/sw/user/auth/register",
-                                "/sw/user/auth/login",
-                                "/sw/admin/user/register",
-                                "/sw/admin/user/login"
-                        ).permitAll()
-                        // 其他所有请求都需要认证
+                        // 1. 彻底放行文档和登录
+                        .requestMatchers("/doc.html", "/webjars/**", "/v3/api-docs/**", "/sw/user/auth/**").permitAll()
+
+                        // 2. 内部接口权限锁定
+                        // 确保 InternalServiceFilter 成功赋予了 ROLE_INTERNAL_SERVICE 角色
+                        .requestMatchers("/sw/system/**").hasRole("INTERNAL_SERVICE")
+
                         .anyRequest().authenticated()
                 )
-                // 4. 添加 JWT 过滤器
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                // 3. 异常处理：如果是权限问题，打印具体原因
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            log.error("❌ 认证失败: {} | 路径: {}", authException.getMessage(), request.getRequestURI());
+                            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
+                        })
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            log.error("❌ 权限不足: {} | 路径: {}", accessDeniedException.getMessage(), request.getRequestURI());
+                            response.sendError(HttpServletResponse.SC_FORBIDDEN, "Forbidden");
+                        })
+                )
+                // 4. 关键：确保内部校验在最前面
+                .addFilterBefore(internalServiceFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(jwtAuthenticationFilter, InternalServiceFilter.class);
+
         return http.build();
     }
 }

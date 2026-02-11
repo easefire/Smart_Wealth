@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartwealth.agent.mapper.AiReportTaskMapper">
+
+    <resultMap id="BaseResultMap" type="com.smartwealth.agent.entity.AiReportTask">
+        <id column="id" property="id" />
+        <result column="user_id" property="userId" />
+        <result column="task_id" property="taskId" />
+        <result column="prompt" property="prompt" />
+        <result column="status" property="status" />
+        <result column="report_result" property="reportResult" />
+        <result column="error_msg" property="errorMsg" />
+        <result column="create_time" property="createTime" />
+        <result column="update_time" property="updateTime" />
+    </resultMap>
+    <sql id="Base_Column_List">
+        id, user_id, task_id, prompt, status, report_result, error_msg, create_time, update_time
+    </sql>
+    <update id="updateResultByTaskId">
+        UPDATE t_agent_report_task
+        <set>
+            status = #{status},
+            <if test="reportResult != null">
+                report_result = #{reportResult},
+            </if>
+            <if test="errorMsg != null">
+                error_msg = #{errorMsg},
+            </if>
+            update_time = NOW()
+        </set>
+        WHERE task_id = #{taskId}
+    </update>
+    <select id="selectByTaskId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List" />
+        FROM t_agent_report_task
+        WHERE task_id = #{taskId}
+        LIMIT 1
+    </select>
+</mapper>

@@ -10,6 +10,8 @@ import com.smartwealth.trade.entity.TradeOrder;
 import com.smartwealth.trade.enums.TradeStatusEnum;
 import com.smartwealth.trade.mapper.DailyProfitMapper;
 import com.smartwealth.trade.mapper.TradeOrderMapper;
+import com.smartwealth.trade.service.ITradeOrderService;
+import com.smartwealth.trade.vo.PositionVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -36,6 +38,8 @@ public class InternalTradeService {
     DailyProfitMapper dailyProfitMapper;
     @Autowired
     private InternalProductService productService;
+    @Autowired
+    private ITradeOrderService tradeOrderService;
 
     // 获取用户持仓总市值和总盈亏
     public Map<String, BigDecimal> getUserPositionSummary(Long userId) {
@@ -75,5 +79,9 @@ public class InternalTradeService {
     // 查询单个订单（内部调用）
     public TradeOrder getOne(LambdaQueryWrapper<TradeOrder> last) {
         return orderMapper.selectOne(last);
+    }
+    //查看用户所有持仓
+    public List<PositionVO> getUserPositions(Long userId) {
+        return tradeOrderService.listMyPositions(userId,1,1000).getData().getRecords();
     }
 }

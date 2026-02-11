@@ -11,6 +11,7 @@ import com.smartwealth.product.mapper.ProdInfoMapper;
 import com.smartwealth.product.mapper.ProductRateHistoryMapper;
 import com.smartwealth.product.service.IProdInfoService;
 import com.smartwealth.product.vo.ProductDetailVO;
+import com.smartwealth.product.vo.ProductVO;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -163,5 +164,10 @@ public class InternalProductService {
 
     public List<ProductRateHistory> selectList(LambdaQueryWrapper<ProductRateHistory> eq) {
         return productRateHistoryMapper.selectList(eq);
+    }
+
+    public List<ProductVO> selectListForAgent(Integer RiskLevel) {
+        return prodInfoMapper.selectProductVOList(RiskLevel);
+
     }
 }

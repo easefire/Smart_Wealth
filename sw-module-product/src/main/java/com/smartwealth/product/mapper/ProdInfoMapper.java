@@ -2,10 +2,12 @@ package com.smartwealth.product.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.smartwealth.product.entity.ProdInfo;
+import com.smartwealth.product.vo.ProductVO;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * <p>
@@ -25,5 +27,6 @@ public interface ProdInfoMapper extends BaseMapper<ProdInfo> {
             "WHERE id = #{productId} AND locked_stock >= #{shares}")
     int unlockStock(@Param("productId") Long productId, @Param("shares") BigDecimal shares);
 
+    List<ProductVO> selectProductVOList(Integer riskLevel);
 }
 

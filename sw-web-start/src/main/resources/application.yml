@@ -53,8 +53,13 @@ xxl:
       # 自动获取IP，本地开发一般不用动
       address:
       ip:
-      # 你的项目作为一个RPC服务端，需要暴露一个端口给调度中心回调
-      # 注意：不要和 server.port 冲突！
       port: 8999
       logpath: ./logs/jobhandler
       logretentiondays: 30
+# application.yml
+smartwealth:
+  ai:
+    python-url: localhost:8888  # Python 服务的 URL 地址
+  security:
+    internal-key: ${SMART_WEALTH_INTERNAL_KEY:e-mars-standard-secret-2026} # 优先从环境变量读取
+    allowed-ips: 127.0.0.1,192.168.1.100 # Python 服务的 IP 白名单
