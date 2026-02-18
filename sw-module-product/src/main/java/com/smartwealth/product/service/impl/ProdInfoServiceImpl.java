@@ -1,10 +1,13 @@
 package com.smartwealth.product.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.smartwealth.common.exception.BusinessException;
@@ -25,20 +28,24 @@ import com.smartwealth.product.service.IProdInfoService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.smartwealth.product.service.IProductRateHistoryService;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RBloomFilter;
+import org.redisson.api.RLock;
+import org.redisson.api.RTopic;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationAdapter;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -61,11 +68,18 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
             .maximumSize(1000)
             .expireAfterWrite(1, TimeUnit.MINUTES)
             .build();
+    private static final String BLOOM_FILTER_NAME = "prod:id:bloom:filter";
+    private static final String LOCK_KEY_PREFIX = "lock:prod:detail:";
+    private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
+    // 定义空对象常量
+    private static final ProductDetailVO NULL_DETAIL_VO = new ProductDetailVO();
 
     @Autowired
     private IProductRateHistoryService rateHistoryService;
     @Autowired
     private RedisService redisService;
+    @Autowired
+    private RedissonClient redissonClient;
     @Autowired
     private ProductStockService productStockService;
     @Autowired
@@ -109,6 +123,23 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         rateHistoryService.save(history);
 
         log.info("产品入库完成：{}, ID: {}, 初始净值: {}", product.getName(), product.getId(), initNav);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronizationAdapter() {
+            @Override
+            public void afterCommit() {
+                // 1. 模糊删除所有列表页缓存 (prod:on_sale_list:*)
+                // 因为你不知道新产品会插在第几页（受排序影响），所以全删最安全
+                Set<String> keys = redisService.getkeys(RedisKeyConstants.PRODUCT_ON_SALE_LIST + "*");
+                if (CollectionUtils.isNotEmpty(keys)) {
+                    redisService.delete(keys);
+                }
+                RBloomFilter<Long> bloomFilter = redissonClient.getBloomFilter(ProdInfoServiceImpl.BLOOM_FILTER_NAME);
+                if (bloomFilter.isExists()) { // 防止布隆过滤器还没初始化
+                    bloomFilter.add(product.getId());
+                    log.info("🔥 新产品 ID {} 已同步至布隆过滤器", product.getId());
+                }
+                log.info("新品发布，已清除列表缓存 keys: {}", keys);
+            }
+        });
     }
 
     // 产品下架操作
@@ -121,21 +152,53 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
             throw new BusinessException("产品不存在");
         }
 
-        // 2. 检查当前状态
-        // 如果已经是下架状态(2)，则无需重复操作
+        // 2. 幂等性检查：如果已经是下架状态(2)，直接返回
         if (product.getStatus() == 2) {
             return;
         }
 
-        // 3. 执行下架操作
-        // 仅仅修改状态位为 2
+        // 3. 更新状态
         product.setStatus(2);
-
         if (!this.updateById(product)) {
             throw new BusinessException("产品下架失败");
         }
 
         log.info("管理操作：产品 ID [{}] 已下架", id);
+
+        // 4. 事务提交后清理缓存
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                // ==================== 🗑️ 清除 Redis 缓存 ====================
+                List<String> keysToDelete = new ArrayList<>();
+
+                // 1. 详情缓存
+                keysToDelete.add(String.format(RedisKeyConstants.PRODUCT_DETAIL, id));
+
+                // 2. ⚠️【补全】库存缓存 (防止前端显示有货)
+                keysToDelete.add(String.format(RedisKeyConstants.PRODUCT_STOCK, id));
+
+                // 执行删除
+                redisService.delete(keysToDelete);
+
+                // 3. 列表缓存 (模糊匹配删除)
+                Set<String> listKeys = redisService.getkeys(RedisKeyConstants.PRODUCT_ON_SALE_LIST + "*");
+                if (CollectionUtils.isNotEmpty(listKeys)) {
+                    redisService.delete(listKeys);
+                }
+
+                // ==================== 📢 清除本地缓存 (Caffeine) ====================
+                // 动作 A: 清除当前机器的缓存
+                localProductCache.invalidate(String.valueOf(id));
+
+                // 动作 B: 【进阶】广播通知其他机器清除 (依赖 Redisson)
+                // 生产环境必须加这个，否则其他节点会有短暂的数据不一致
+                RTopic topic = redissonClient.getTopic("product:cache:invalidate");
+                topic.publish(id); // 发送消息：所有监听这个 Topic 的节点都要执行 invalidate(id)
+
+                log.info("产品下架缓存清理完成。ID: {}", id);
+            }
+        });
     }
 
     // 获取所有产品（管理端使用）
@@ -144,208 +207,328 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         return this.list();
     }
 
-    // 获取用户可见的产品列表
     @Override
     public IPage<ProductVO> getUserProductPage(Integer pageNo, Integer pageSize) {
         String cacheKey = String.format(RedisKeyConstants.PRODUCT_ON_SALE_LIST, pageNo, pageSize);
-        Page<ProductVO> cachedPage = redisService.get(cacheKey, Page.class);
+        Object rawData = redisService.get(cacheKey, Object.class);
+        Page<ProductVO> cachedPage = null;
+        if (rawData != null) {
+            try {
+                //TypeReference 解决泛型转换问题
+                cachedPage = JSON_MAPPER.convertValue(rawData, new TypeReference<Page<ProductVO>>() {});
+            } catch (Exception e) {
+                log.error("缓存反序列化失败", e);
+            }
+        }
 
+        // 3. 缓存未命中，查数据库
         if (cachedPage == null) {
             cachedPage = this.loadAndCacheProductPage(pageNo, pageSize, cacheKey);
         }
 
+        // 4. 处理库存回填
         List<ProductVO> records = cachedPage.getRecords();
         if (!CollectionUtils.isEmpty(records)) {
+            // 提取 ID
             List<Long> prodIds = records.stream().map(ProductVO::getId).toList();
 
-            // 1. 生成所有库存 Key
+            // 生成库存 Key List
             List<String> stockKeys = prodIds.stream()
                     .map(id -> String.format(RedisKeyConstants.PRODUCT_STOCK, id))
                     .toList();
 
-            // 2. 批量获取 Redis 实时库存
+            // 批量获取 Redis 实时库存
             List<Object> realTimeStocks = redisService.multiGet(stockKeys);
 
-            // 3. 遍历并检查 null
             for (int i = 0; i < records.size(); i++) {
                 ProductVO vo = records.get(i);
                 Object stockObj = realTimeStocks.get(i);
 
                 if (stockObj == null) {
-                    // 【核心】触发被动加载：从数据库同步并回填
+                    // 情况 A: Redis 没库存 -> 查库 -> 这里的 dbStock 是正常的 466111.59
                     BigDecimal dbStock = productStockService.syncProductStockToRedis(vo.getId());
                     vo.setAvailableStock(dbStock);
                 } else {
-                    vo.setAvailableStock(new BigDecimal(stockObj.toString()));
+                    // 情况 B: Redis 有库存 -> 它是 466111590000 -> 必须缩小 10^6 倍
+                    BigDecimal redisStock = new BigDecimal(stockObj.toString());
+                    // 小数点向左移动 6 位，还原真实数值
+                    vo.setAvailableStock(redisStock.movePointLeft(6));
                 }
             }
         }
         return cachedPage;
     }
-
     /**
      * 封装原本的查库和缓存写入逻辑
      */
     private Page<ProductVO> loadAndCacheProductPage(Integer pageNo, Integer pageSize, String cacheKey) {
-        synchronized (this) {
-            // 二次检查
-            Page<ProductVO> cachedPage = redisService.get(cacheKey, Page.class);
-            if (cachedPage != null) return cachedPage;
+        // 使用分布式锁，锁粒度细化到 "cacheKey" (即 specific page)
+        // 这样查第1页的人不会阻塞查第2页的人
+        String lockKey = RedisKeyConstants.PRODLIST_LOCK + cacheKey;
+        RLock lock = redissonClient.getLock(lockKey);
 
-            // 1. 查数据库
-            Page<ProdInfo> queryPage = new Page<>(pageNo, pageSize);
-            IPage<ProdInfo> dbPage = this.page(queryPage, new LambdaQueryWrapper<ProdInfo>()
-                    .eq(ProdInfo::getStatus, 1)
-                    .orderByAsc(ProdInfo::getRiskLevel));
+        try {
+            // 尝试加锁：等待 3秒，持有锁 10秒
+            if (lock.tryLock(3, 10, TimeUnit.SECONDS)) {
+                try {
+                    // 1. 二次检查 (Double Check)
+                    Object rawData = redisService.get(cacheKey, Object.class);
+                    if (rawData != null) {
+                        try {
+                            return JSON_MAPPER.convertValue(rawData, new TypeReference<Page<ProductVO>>() {});
+                        } catch (Exception e) {
+                            log.warn("DCL 转换失败，降级查库");
+                        }
+                    }
 
-            // 2. 转换 VO
-            List<ProductVO> voList = dbPage.getRecords().stream().map(p -> {
-                ProductVO vo = new ProductVO();
-                BeanUtils.copyProperties(p, vo);
-                // 这里存的是数据库快照，之后会被动态注入覆盖
-                vo.setAvailableStock(p.getTotalStock().subtract(p.getLockedStock()));
-                return vo;
-            }).collect(Collectors.toList());
+                    // 2. 查数据库
+                    Page<ProdInfo> queryPage = new Page<>(pageNo, pageSize);
+                    IPage<ProdInfo> dbPage = this.page(queryPage, new LambdaQueryWrapper<ProdInfo>()
+                            .eq(ProdInfo::getStatus, 1)
+                            .orderByAsc(ProdInfo::getRiskLevel));
 
-            Page<ProductVO> resultPage = new Page<>(dbPage.getCurrent(), dbPage.getSize(), dbPage.getTotal());
-            resultPage.setRecords(voList);
+                    // 3. 转换 VO
+                    List<ProductVO> voList = dbPage.getRecords().stream().map(p -> {
+                        ProductVO vo = new ProductVO();
+                        BeanUtils.copyProperties(p, vo);
+                        vo.setAvailableStock(p.getTotalStock().subtract(p.getLockedStock()));
+                        return vo;
+                    }).collect(Collectors.toList());
 
-            // 3. 写入缓存
-            long ttl = 10 + ThreadLocalRandom.current().nextLong(10);
-            redisService.set(cacheKey, resultPage, ttl, TimeUnit.MINUTES);
+                    Page<ProductVO> resultPage = new Page<>(dbPage.getCurrent(), dbPage.getSize(), dbPage.getTotal());
+                    resultPage.setRecords(voList);
 
-            return resultPage;
+                    // 4. 写入缓存
+                    long ttl = 10 + ThreadLocalRandom.current().nextLong(10);
+                    redisService.set(cacheKey, resultPage, ttl, TimeUnit.MINUTES);
+
+                    return resultPage;
+                } finally {
+                    lock.unlock();
+                }
+            } else {
+                // 获取锁失败（说明有别人正在查这个页），短暂休眠后直接读缓存
+                // 或者直接抛出“系统繁忙”让前端重试
+                Thread.sleep(100);
+                // 递归一次或者直接返回 null
+                return null;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
         }
     }
     // 获取产品详情
 
-    /**
-     * 本地一级缓存：存储“全量”产品详情（Base + 90天历史），1分钟失效
-     */
     @Override
     public ProductDetailVO getProductDetail(Long prodId, Integer days) {
+        // 0. 【第一道防线】布隆过滤器拦截 (解决缓存穿透)
+        RBloomFilter<Long> bloomFilter = redissonClient.getBloomFilter(BLOOM_FILTER_NAME);
+        if (!bloomFilter.contains(prodId)) {
+            // 布隆过滤器说不存在，那肯定不存在
+            log.warn("🚨 布隆过滤器拦截非法请求 ID: {}", prodId);
+            throw new BusinessException(ResultCode.PRODUCT_NOT_EXIST);
+        }
+        // 注意：布隆过滤器说存在，由于误判率，实际上可能不存在，所以后面还得有空值处理
+
         int queryDays = (days == null || days <= 0) ? 7 : Math.min(days, 90);
 
-        // 1. 【L1/L2 缓存】仅获取“静态”详情镜像
-        // 这里的 fullDetail 绝对不能包含 availableStock，否则会导致数据过时
+        // 1. 【L1 本地缓存 / L2 分布式缓存】获取静态详情
+        // Caffeine 的 loader 内部会调用 getFullProductDetailFromL2
         ProductDetailVO fullDetail = localProductCache.get(String.valueOf(prodId), id -> {
             return getFullProductDetailFromL2(Long.valueOf(id));
         });
 
-        if (fullDetail == null) throw new BusinessException(ResultCode.PRODUCT_NOT_EXIST);
+        // 2. 【防穿透兜底】如果 Redis 里存的是空对象标记
+        if (fullDetail == null || fullDetail == NULL_DETAIL_VO) {
+            throw new BusinessException(ResultCode.PRODUCT_NOT_EXIST);
+        }
 
-        // 3. 【内存截取】基于 90 天全量数据进行切片
-
+        // 3. 【内存截取历史数据】
         List<ProductHistoryVO> fullHistory = fullDetail.getHistoryList();
-        int totalSize = fullHistory.size();
-        int limit = Math.min(queryDays, totalSize);
-        // 截取末尾最新的 N 天数据
-        List<ProductHistoryVO> subHistory = fullHistory.subList(totalSize - limit, totalSize);
+        List<ProductHistoryVO> subHistory = Collections.emptyList();
 
-        // 3. 【结果封装】
+        if (!CollectionUtils.isEmpty(fullHistory)) {
+            int totalSize = fullHistory.size();
+            int limit = Math.min(queryDays, totalSize);
+            subHistory = fullHistory.subList(totalSize - limit, totalSize);
+        }
+
+        // 4. 【组装结果】
         ProductDetailVO result = new ProductDetailVO();
         result.setBaseInfo(fullDetail.getBaseInfo());
         result.setHistoryList(new ArrayList<>(subHistory));
 
-        // 4.动态注入“活”的份额
-        BigDecimal stockObj = redisService.getRedisStock(prodId);
+        // 5. 【动态注入库存】(这部分逻辑保持你之前的降级策略，不需要锁)
+        this.injectRealTimeStock(prodId, result);
 
+        return result;
+    }
+
+    // 抽取库存注入逻辑，保持主方法整洁
+    private void injectRealTimeStock(Long prodId, ProductDetailVO result) {
+        BigDecimal stockObj = redisService.getRedisStock(prodId);
         if (stockObj == null) {
             try {
-                // 1. 尝试走独立事务同步缓存
                 BigDecimal syncedStock = productStockService.syncProductStockToRedis(prodId);
                 result.setAvailableStock(syncedStock);
             } catch (Exception e) {
-                // 2. 【核心】捕获所有异常，绝不让异常往上抛！
-                log.error("【降级警告】产品 {} 缓存同步失败，启用数据库直读兜底。原因: {}", prodId, e.getMessage());
-
-                // 3. 数据库方法进行兜底
+                log.error("【降级警告】产品 {} 缓存同步失败: {}", prodId, e.getMessage());
                 ProductDetailVO dbDetail = this.getRawProductDetailFromDb(prodId);
                 if (dbDetail != null) {
                     result.setAvailableStock(dbDetail.getAvailableStock());
                 } else {
-                    throw new BusinessException("产品数据异常");
+                    // 这里可以设为 0 或者抛异常，视业务容忍度而定
+                    result.setAvailableStock(BigDecimal.ZERO);
                 }
             }
         } else {
             result.setAvailableStock(new BigDecimal(stockObj.toString()));
         }
-
-        return result;
     }
-
     /**
-     * 二级缓存获取逻辑：只负责静态快照
+     * 获取全量静态数据 (Base + History)
+     * 使用 Redisson 分布式锁解决缓存击穿
      */
     private ProductDetailVO getFullProductDetailFromL2(Long prodId) {
-        // 1. 获取基础信息 (BaseInfo) - 保持现状，这是对的
         String baseKey = String.format(RedisKeyConstants.PRODUCT_DETAIL, prodId);
+
+        // 1. 查询 Redis
         ProductDetailVO.ProductBaseInfoVO baseInfo = redisService.get(baseKey, ProductDetailVO.ProductBaseInfoVO.class);
 
-        if (baseInfo == null) {
-            ProdInfo product = this.getById(prodId);
-            if (product == null) return null;
+        // 2. 如果缓存命中，且不是空对象，直接组装返回 (历史数据通常和 BaseInfo 一起过期，简化处理)
+        if (baseInfo != null) {
+            // 检查是否为空对象标记
+            if (baseInfo.getId() == null) return NULL_DETAIL_VO;
 
-            baseInfo = new ProductDetailVO.ProductBaseInfoVO();
-            BeanUtils.copyProperties(product, baseInfo);
-
-            // 基础信息缓存 12 小时，绝对不能带库存信息
-            redisService.set(baseKey, baseInfo, 12, TimeUnit.HOURS);
+            // 缓存命中 Base，顺便取 History (大概率也在缓存)
+            List<ProductHistoryVO> historyList = getProductHistoryFromCacheOrDb(prodId);
+            ProductDetailVO vo = new ProductDetailVO();
+            vo.setBaseInfo(baseInfo);
+            vo.setHistoryList(historyList);
+            return vo;
         }
 
-        // 2. 获取 90 天历史数据 - 保持现状，DCL 逻辑写得很好
-        List<ProductHistoryVO> historyList = getProductHistoryWithCache(prodId);
+        // ==================== 🔒 分布式锁开始 ====================
+        String lockKey = LOCK_KEY_PREFIX + prodId;
+        RLock lock = redissonClient.getLock(lockKey);
 
-        // 3. 组装全量 VO
-        ProductDetailVO fullDetail = new ProductDetailVO();
-        fullDetail.setBaseInfo(baseInfo);
-        fullDetail.setHistoryList(historyList);
+        try {
+            // 尝试加锁：等待 3秒，上锁 10秒自动释放
+            // tryLock 能防止大量请求阻塞，快速失败或等待
+            if (lock.tryLock(3, 10, TimeUnit.SECONDS)) {
+                try {
+                    // 3. 【DCL 双重检查】再次查 Redis，防止重复查库
+                    baseInfo = redisService.get(baseKey, ProductDetailVO.ProductBaseInfoVO.class);
+                    if (baseInfo != null) {
+                        // 检查是否为空对象标记
+                        if (baseInfo.getId() == null) return NULL_DETAIL_VO;
 
-        // 它是静态快照，不应该感知“份额”的存在 [cite: 2026-01-15, 2026-01-22]
+                        // 缓存命中 Base，顺便取 History (大概率也在缓存)
+                        List<ProductHistoryVO> historyList = getProductHistoryFromCacheOrDb(prodId);
+                        ProductDetailVO vo = new ProductDetailVO();
+                        vo.setBaseInfo(baseInfo);
+                        vo.setHistoryList(historyList);
+                        return vo;
+                    }
 
-        return fullDetail;
+                    // 4. 查数据库
+                    ProdInfo product = this.getById(prodId);
+
+                    // 5. 【防穿透】数据库也没有
+                    if (product == null) {
+                        // 写空值，有效期 30s
+                        redisService.set(baseKey, new ProductDetailVO.ProductBaseInfoVO(), 30, TimeUnit.SECONDS);
+                        return NULL_DETAIL_VO;
+                    }
+
+                    // 6. 组装数据
+                    baseInfo = new ProductDetailVO.ProductBaseInfoVO();
+                    BeanUtils.copyProperties(product, baseInfo);
+
+                    // 7. 【防雪崩】回写 Redis，随机过期时间
+                    long ttl = 12 * 60 + ThreadLocalRandom.current().nextLong(60);
+                    redisService.set(baseKey, baseInfo, ttl, TimeUnit.MINUTES);
+
+                    // 8. 同时加载历史数据
+                    List<ProductHistoryVO> historyList = getProductHistoryFromCacheOrDb(prodId);
+
+                    ProductDetailVO fullDetail = new ProductDetailVO();
+                    fullDetail.setBaseInfo(baseInfo);
+                    fullDetail.setHistoryList(historyList);
+                    return fullDetail;
+
+                } finally {
+                    lock.unlock(); // 必须在 finally 中释放锁
+                }
+            } else {
+                // 获取锁失败 (太拥挤了)，可以报错，也可以自旋重试，或者降级返回空
+                throw new BusinessException(ResultCode.FAILURE);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ResultCode.FAILURE);
+        }
     }
-
     /**
-     * 获取 90 天全量历史数据，带 DCL 缓存保护
+     * 获取历史数据
      */
-    private List<ProductHistoryVO> getProductHistoryWithCache(Long prodId) {
+    private List<ProductHistoryVO> getProductHistoryFromCacheOrDb(Long prodId) {
         String historyKey = String.format(RedisKeyConstants.PRODUCT_HISTORY, prodId);
 
-        // 1. 第一次检查 Redis (Array 规避泛型擦除)
+        // 1. 查缓存
         ProductHistoryVO[] cachedArray = redisService.get(historyKey, ProductHistoryVO[].class);
-        if (cachedArray != null) return Arrays.asList(cachedArray);
+        if (cachedArray != null) return cachedArray.length == 0 ? Collections.emptyList() : Arrays.asList(cachedArray);
 
-        synchronized (this) {
-            // 2. 第二次检查 (DCL 核心)
-            cachedArray = redisService.get(historyKey, ProductHistoryVO[].class);
-            if (cachedArray != null) return Arrays.asList(cachedArray);
+        // 2. 加锁 (这里可以复用上面的锁，或者用一把新锁)
+        // 为了简单，假设上层方法已经锁住了 prodId，这里其实可以直接查。
+        // 但如果此方法也会被单独调用，则必须加锁。这里演示加锁：
+        RLock lock = redissonClient.getLock("lock:prod:history:" + prodId);
 
-            log.warn("L2 缓存击穿，开始查询数据库历史表: {}", prodId);
+        try {
+            if (lock.tryLock(3, 10, TimeUnit.SECONDS)) {
+                try {
+                    // DCL
+                    cachedArray = redisService.get(historyKey, ProductHistoryVO[].class);
+                    if (cachedArray != null) return Arrays.asList(cachedArray);
 
-            // 3. 查库，拿死 90 天的数据
-            List<ProductRateHistory> historyList = rateHistoryService.list(
-                    new LambdaQueryWrapper<ProductRateHistory>()
-                            .eq(ProductRateHistory::getProdId, prodId)
-                            .orderByDesc(ProductRateHistory::getRecordDate)
-                            .last("LIMIT " + 90)
-            );
+                    // 查库
+                    List<ProductRateHistory> historyList = rateHistoryService.list(
+                            new LambdaQueryWrapper<ProductRateHistory>()
+                                    .eq(ProductRateHistory::getProdId, prodId)
+                                    .orderByDesc(ProductRateHistory::getRecordDate)
+                                    .last("LIMIT " + 90)
+                    );
+                    List<ProductHistoryVO> result;
+                    long ttl;
 
-            // 4. 逻辑处理：反转排序并转换为 VO
-            Collections.reverse(historyList);
-            List<ProductHistoryVO> result = historyList.stream().map(h -> {
-                ProductHistoryVO vo = new ProductHistoryVO();
-                vo.setDate(h.getRecordDate());
-                vo.setRate(h.getRate());
-                vo.setNav(h.getNav());
-                return vo;
-            }).collect(Collectors.toList());
+                    if (CollectionUtils.isEmpty(historyList)) {
+                        result = Collections.emptyList();
+                        ttl = 5;
+                    } else {
+                        Collections.reverse(historyList);
+                        result = historyList.stream().map(h -> {
+                            ProductHistoryVO vo = new ProductHistoryVO();
+                            vo.setDate(h.getRecordDate());
+                            vo.setRate(h.getRate());
+                            vo.setNav(h.getNav());
 
-            // 5. 回写 Redis
-            redisService.set(historyKey, result, 1, TimeUnit.HOURS);
-            return result;
+                            return vo;
+                        }).collect(Collectors.toList());
+                        ttl = 60 + ThreadLocalRandom.current().nextLong(10);
+                    }
+                    redisService.set(historyKey, result, ttl, TimeUnit.MINUTES);
+                    return result;
+                } finally {
+                    lock.unlock();
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
+        return Collections.emptyList(); // 降级返回空
     }
+
 
     /**
      * 纯数据库获取逻辑：仅在缓存完全不可用时调用

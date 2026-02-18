@@ -5,16 +5,14 @@ import com.smartwealth.common.redis.constant.RedisKeyConstants;
 import com.smartwealth.common.redis.service.RedisService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.*;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -111,6 +109,13 @@ public class RedisServiceImpl implements RedisService {
     public void delete(String key) {
         redisTemplate.delete(key);
     }
+    @Override
+    public void delete(Collection<String> keys) {
+        if (keys == null || keys.isEmpty()) {
+            return;
+        }
+        redisTemplate.delete(keys);
+    }
     //设置过期时间
     @Override
     public void expire(String key, long timeout, TimeUnit unit) {
@@ -119,14 +124,6 @@ public class RedisServiceImpl implements RedisService {
     //获取过期时间
     @Override
     public Long getExpire(String key) { return redisTemplate.getExpire(key, TimeUnit.SECONDS); }
-    //获取分布式锁
-    @Override
-    public boolean tryLock(String key, long timeout, TimeUnit unit) {
-        return Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(key, "LOCK", timeout, unit));
-    }
-    //释放分布式锁
-    @Override
-    public void unlock(String key) { redisTemplate.delete(key); }
     // Lua 脚本扣减库存
     @Override
     public Long executeStock(String key, BigDecimal quantity) {
@@ -167,6 +164,37 @@ public class RedisServiceImpl implements RedisService {
             log.error("库存数据异常: key={}, val={}", stockKey, val);
             return null;
         }
+    }
+
+    /**
+     * 【生产级】模糊查询 Key
+     * 使用 SCAN 命令替代 KEYS 命令，避免大数据量下阻塞 Redis 主线程
+     *
+     * @param pattern 匹配模式，例如 "prod:list:*"
+     * @return 匹配到的 Key 集合
+     */
+    @Override
+    public Set<String> getkeys(String pattern) {
+        return redisTemplate.execute((RedisCallback<Set<String>>) connection -> {
+            Set<String> keys = new HashSet<>();
+
+            // 使用 SCAN 命令，count 1000 表示每次遍历 1000 个槽位，不阻塞
+            ScanOptions options = ScanOptions.scanOptions()
+                    .match(pattern)
+                    .count(1000)
+                    .build();
+
+            // 这里的 cursor 不需要手动关闭，Spring 会自动处理
+            // 但为了保险，通常放在 try-with-resources 或者由 execute 自动管理
+            try (Cursor<byte[]> cursor = connection.scan(options)) {
+                while (cursor.hasNext()) {
+                    keys.add(new String(cursor.next(), StandardCharsets.UTF_8));
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Redis scan failed", e);
+            }
+            return keys;
+        });
     }
 
 }

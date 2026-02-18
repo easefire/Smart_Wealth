@@ -22,6 +22,7 @@ import com.smartwealth.common.dto.RedemptionMessageDTO;
 import com.smartwealth.common.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -79,8 +80,7 @@ public class InternalAssetService {
     public void selectprelock(Long userId) {
         walletMapper.selectforupdate(userId);
     }
-
-    // 检查该订单是否已经处理过 [cite: 2026-01-24]
+    // 检查该订单是否已经处理过
     public boolean isProcessed(Long orderId, TransactionTypeEnum type) {
         // 1. 根据类型构造出当时存进去的 flow_no
         String targetFlowNo;
@@ -104,32 +104,29 @@ public class InternalAssetService {
         BigDecimal share = msg.getShare();
         Long orderId = msg.getOrderId();
         Long productId = msg.getProductId();
-
         // 1. 【核心新增】幂等校验：绝对不允许对同一个 orderId 重复扣款 [cite: 2026-01-24]
         if (this.isProcessed(orderId, TransactionTypeEnum.PURCHASE)) {
             log.warn("订单 {} 已扣款成功，忽略重复请求", orderId);
             return;
         }
-
         try{
+            AssetWallet walletCheck = assetWalletService.getOne(new LambdaQueryWrapper<AssetWallet>()
+                    .eq(AssetWallet::getUserId, userId));
+            if (!passwordEncoder.matches(msg.getPayPassword(), walletCheck.getPayPassword())) {
+                throw new BusinessException("支付密码错误");
+            }
+
             // 2. 锁定钱包（保留原有的悲观锁，防止同一用户的其他动账操作干扰）
             AssetWallet wallet = assetWalletService.getOne(new LambdaQueryWrapper<AssetWallet>()
                     .eq(AssetWallet::getUserId, userId)
                     .last("FOR UPDATE"));
-
             if (wallet == null) throw new BusinessException("账户不存在");
-
-            // 3. 校验密码（消息中携带的密码，在此进行最终核对）
-            if (!passwordEncoder.matches(msg.getPayPassword(), wallet.getPayPassword())) {
-                throw new BusinessException("支付密码错误");
-            }
 
             // 4. 余额检查
             if (wallet.getBalance().compareTo(amount) < 0) {
                 throw new BusinessException("余额不足");
             }
-
-            // 5. 执行动账（乐观锁更新）
+            // 5. 执行动账
             int rows = walletMapper.update(null, new LambdaUpdateWrapper<AssetWallet>()
                     .eq(AssetWallet::getUserId, userId)
                     .eq(AssetWallet::getVersion, wallet.getVersion())
@@ -137,10 +134,9 @@ public class InternalAssetService {
                     .set(AssetWallet::getVersion, wallet.getVersion() + 1));
 
             if (rows == 0) throw new BusinessException("并发动账冲突，请重试");
-
-            // 6. 记录流水：bizId 必须存入 orderId 用于幂等校验 [cite: 2026-01-24]
+            // 6. 记录流水：bizId 必须存入 orderId 用于幂等校验
             AssetFlow flow = new AssetFlow();
-            flow.setFlowNo("PURC" + orderId); // 使用订单号生成流水号，进一步增强唯一性 [cite: 2026-01-24]
+            flow.setFlowNo("PURC" + orderId); // 使用订单号生成流水号，进一步增强唯一性
             flow.setUserId(userId);
             flow.setBizId(productId);
             flow.setAmount(amount.negate());
@@ -156,7 +152,7 @@ public class InternalAssetService {
                     try {
                         // A. 发送 MQ
                         assetResultProducer.sendResult(orderId, "PURCHASE", true, "SUCCESS");
-                        // B. 发送成功，更新本地消息状态为 1 (SUCCESS)
+                        // B. 发送成功，更新本地消息状态为 1
                         localMsgService.updateStatusSuccess(localMsg.getId());
                     } catch (Exception e) {
                         log.warn("业务扣款失败: {}", e.getMessage());
@@ -274,15 +270,25 @@ public class InternalAssetService {
     }
     // 保存资金流水的私有方法
     private void saveFlow(Long userId,Long requestId, Long bizId, TransactionTypeEnum type, BigDecimal amount, BigDecimal snapshot, String remark) {
-        AssetFlow flow = new AssetFlow();
-        flow.setFlowNo("REDE" + requestId); // 使用赎回记录ID生成流水号
-        flow.setUserId(userId);
-        flow.setBizId(bizId); // 关联产品ID，消除 <null>
-        flow.setAmount(amount);
-        flow.setType(type);
-        flow.setBalanceSnapshot(snapshot);
-        flow.setRemark(remark);
-        flowMapper.insert(flow);
+        try {
+            // 尝试插入流水
+            AssetFlow flow = new AssetFlow();
+            flow.setFlowNo("REDE" + requestId); // 使用赎回记录ID生成流水号
+            flow.setUserId(userId);
+            flow.setBizId(bizId); // 关联产品ID，消除 <null>
+            flow.setAmount(amount);
+            flow.setType(type);
+            flow.setBalanceSnapshot(snapshot);
+            flow.setRemark(remark);
+            flowMapper.insert(flow);
+        } catch (DuplicateKeyException e) {
+            // 捕获唯一键冲突异常
+            // 💡 关键点：如果是流水号重复，说明这条消息之前已经成功消费过了
+            log.warn("⚠️ 幂等性保护：检测到重复流水号 {}, 视为消费成功。忽略本次插入。",requestId);
+
+            // 这里必须吞掉异常，不要抛出！
+            // 如果抛出异常，RabbitMQ 会以为消费失败，无限重试，导致死循环报错。
+        }
     }
 
     public List<AssetFlowTradeDTO> selectPurchaseFlowsWithRemark() {

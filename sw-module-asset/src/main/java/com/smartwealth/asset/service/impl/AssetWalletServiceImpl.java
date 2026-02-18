@@ -263,11 +263,10 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
         if (wallet == null) {
             throw new BusinessException("钱包账户异常");
         }
-
         WalletVO vo = new WalletVO();
-        vo.setTotalAmount(wallet.getBalance().setScale(4, RoundingMode.HALF_UP));
+        vo.setTotalAmount(wallet.getBalance().setScale(2, RoundingMode.HALF_UP));
         vo.setBalance(wallet.getBalance().subtract(wallet.getFrozenAmount())
-                .setScale(4, RoundingMode.HALF_UP));
+                .setScale(2, RoundingMode.HALF_UP));
         vo.setFrozenAmount(wallet.getFrozenAmount());
         vo.setHasPayPassword(wallet.getPayPassword() != null && !wallet.getPayPassword().trim().isEmpty());
         vo.setUpdateTime(wallet.getUpdateTime());

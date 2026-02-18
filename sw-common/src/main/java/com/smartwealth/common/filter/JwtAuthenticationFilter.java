@@ -87,4 +87,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             UserContext.clear();
         }
     }
+    // 在 JwtAuthenticationFilter.java 中添加或重写此方法
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        // 🔍 只要是下面这些路径，本过滤器直接“自杀”，彻底不拦截
+        return path.contains("/doc.html") ||
+                path.contains("/v3/api-docs") ||
+                path.contains("/swagger-resources") ||
+                path.contains("/webjars") ||
+                path.contains("/favicon.ico") ||
+                path.contains("/error");
+    }
 }

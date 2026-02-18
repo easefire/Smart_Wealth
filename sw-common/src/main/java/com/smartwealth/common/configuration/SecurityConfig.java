@@ -38,11 +38,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 1. 彻底放行文档和登录
                         .requestMatchers("/doc.html", "/webjars/**", "/v3/api-docs/**", "/sw/user/auth/**").permitAll()
-
                         // 2. 内部接口权限锁定
                         // 确保 InternalServiceFilter 成功赋予了 ROLE_INTERNAL_SERVICE 角色
                         .requestMatchers("/sw/system/**").hasRole("INTERNAL_SERVICE")
-
                         .anyRequest().authenticated()
                 )
                 // 3. 异常处理：如果是权限问题，打印具体原因

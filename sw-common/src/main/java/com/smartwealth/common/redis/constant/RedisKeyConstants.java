@@ -65,4 +65,8 @@ public class RedisKeyConstants {
      * 示例：sw:market:sentiment:latest
      */
     public static final String KEY_MARKET_SENTIMENT_LATEST = "sw:market:sentiment:latest";
+    /**
+     * 产品列表读取分布式锁
+     */
+    public static final String PRODLIST_LOCK = "sw:lock:prodlist:%s";
 }
