@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -52,7 +53,15 @@ public interface TradeOrderMapper extends BaseMapper<TradeOrder> {
      * 批量累加收益
      * 注意：这里是做加法 set accumulated_income = accumulated_income + #{item.accumulatedIncome}
      */
-    void batchAddIncome(@Param("list") List<TradeOrder> list);
+
+    List<TradeOrder> selectUnsettledOrders(@Param("lastId") Long lastId,
+                                           @Param("fetchSize") int fetchSize,
+                                           @Param("shardIndex") int shardIndex,
+                                           @Param("shardTotal") int shardTotal,
+                                           @Param("bizDate") LocalDate bizDate);
+
+    // 批量累加收益
+    int batchAddIncome(@Param("list") List<TradeOrder> list);
 
     List<TradeCheckDTO> checkIncomeConsistency();
 

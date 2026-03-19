@@ -1,9 +1,0 @@
-2026-01-26 21:31:00 [com.xxl.job.core.thread.JobThread#run]-[134]-[xxl-job, JobThread-12-1769434260013] <br>----------- xxl-job job execute start -----------<br>----------- Param:
-2026-01-26 21:31:00 [com.xxl.job.core.thread.JobThread#run]-[180]-[xxl-job, JobThread-12-1769434260013] <br>----------- xxl-job job execute end(finish) -----------<br>----------- Result: handleCode=200, handleMsg = null
-2026-01-26 21:31:00 [com.xxl.job.core.thread.TriggerCallbackThread#callbackLog]-[197]-[xxl-job, executor TriggerCallbackThread] <br>----------- xxl-job job callback finish.
-2026-01-26 21:31:03 [com.xxl.job.core.thread.JobThread#run]-[195]-[xxl-job, JobThread-12-1769434260013] <br>----------- JobThread toStop, stopReason:web container destroy and kill the job.
-2026-01-26 21:31:03 [com.xxl.job.core.thread.JobThread#run]-[205]-[xxl-job, JobThread-12-1769434260013] <br>----------- JobThread Exception:java.lang.InterruptedException
-	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.awaitNanos(AbstractQueuedSynchronizer.java:1686)
-	at java.base/java.util.concurrent.LinkedBlockingQueue.poll(LinkedBlockingQueue.java:460)
-	at com.xxl.job.core.thread.JobThread.run(JobThread.java:115)
-<br>----------- xxl-job job execute end(error) -----------

@@ -16,6 +16,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import jakarta.validation.Valid;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -44,7 +45,7 @@ public interface ITradeOrderService extends IService<TradeOrder> {
     void handleRedemptionResult(Long requestId, boolean success, String reason);
 
     @Transactional(rollbackFor = Exception.class)
-    void executeDailySettlement();
+    void executeDailySettlementWithSharding(LocalDate bizDate, int shardIndex, int shardTotal);
 
     List<TradeCheckDTO> checkIncomeConsistency();
 }

@@ -9,6 +9,10 @@ spring:
     url: jdbc:mysql://localhost:3306/smart_wealth_db?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
     username: root
     password: 923827
+    hikari:
+      maximum-pool-size: 25    # 最大连接数，建议调大以应对高并发
+      minimum-idle: 10          # 最小空闲连接数
+      connection-timeout: 30000 # 获取连接超时时间（毫秒）
   data:
     redis:
       host: localhost
@@ -17,23 +21,48 @@ spring:
       database: 0
       lettuce:
         pool:
-          max-active: 8  # 连接池最大连接数
-  rabbitmq:
-    host: 127.0.0.1
-    port: 5672
-    username: guest
-    password: guest
-    # 核心配置：开启发送确认，这是实现“本地消息表”可靠性的前提
-    publisher-confirm-type: correlated
-    publisher-returns: true
+          max-active: 200      # 放开限制，匹配你的 200 并发压测
+          max-idle: 50         # 最大空闲连接
+          min-idle: 10         # 最小空闲连接
+          max-wait: 5000ms     # 最大阻塞等待时间，超过5秒拿不到连接则报错，不至于卡死十几秒
+  spring:
+    rabbitmq:
+      host: 127.0.0.1
+      port: 5672
+      username: guest
+      password: guest
+
+      # ================= 护甲 1：发送端防线 (Producer) =================
+      # 作用：确保消息发出去并且落盘，配合本地消息表修改 status = 1
+      publisher-confirm-type: correlated
+      publisher-returns: true
+
+      # ================= 护甲 2：消费端防线 (Consumer) =================
+      listener:
+        simple:
+          # 【极其关键】金融系统必须开启手动 ACK，绝不能让 Spring 替你自动确认
+          acknowledge-mode: manual
+          # 消费者线程池大小，起到流量削峰作用
+          concurrency: 5
+          max-concurrency: 15
+          # 拒绝消息后是否重新塞回原队列？绝对选 false，让它去死信队列
+          default-requeue-rejected: false
+          retry:
+            # 开启本地内存重试拦截器
+            enabled: true
+            # 重试 3 次（含第一次执行）
+            max-attempts: 3
+            # 退避算法：2秒 -> 4秒 -> 8秒
+            initial-interval: 2000ms
+            multiplier: 2.0
+            max-interval: 10000ms
 
 # MyBatis Plus 配置
 mybatis-plus:
   mapper-locations: classpath*:mapper/*.xml
   configuration:
     map-underscore-to-camel-case: true # 开启下划线转驼峰
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
-  type-enums-package: com.smartwealth.user.enums # 开启控制台打印 SQL，调试神器
+  type-enums-package: com.smartwealth.user.enums
 
 # Knife4j (Swagger) 配置
 knife4j:
@@ -61,5 +90,5 @@ smartwealth:
   ai:
     python-url: localhost:8888  # Python 服务的 URL 地址
   security:
-    internal-key: ${SMART_WEALTH_INTERNAL_KEY:e-mars-standard-secret-2026} # 优先从环境变量读取
+    # 优先从环境变量读取
     allowed-ips: 127.0.0.1,192.168.1.100 # Python 服务的 IP 白名单

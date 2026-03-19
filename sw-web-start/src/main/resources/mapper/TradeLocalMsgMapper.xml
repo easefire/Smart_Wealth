@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
 <mapper namespace="com.smartwealth.trade.mapper.TradeLocalMsgMapper">
+    <update id="updateStatusSuccess">
+        UPDATE t_trade_local_msg
+        SET status = 1
+        WHERE msg_id = #{msgId}
+    </update>
     <select id="selectPendingMsgs" resultType="com.smartwealth.trade.entity.TradeLocalMsg">
         SELECT * FROM t_trade_local_msg
         WHERE status = 0
           AND next_retry &lt;= NOW()
-          AND retry_count &lt; 5  LIMIT 100
+          AND retry_count &lt; 5  LIMIT 500
     </select>
+
 </mapper>

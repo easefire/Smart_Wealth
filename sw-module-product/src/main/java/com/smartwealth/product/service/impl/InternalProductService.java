@@ -14,9 +14,12 @@ import com.smartwealth.product.vo.ProductDetailVO;
 import com.smartwealth.product.vo.ProductVO;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.validator.internal.util.stereotypes.Lazy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -39,6 +42,9 @@ import java.util.stream.Collectors;
 public class InternalProductService {
 
     @Autowired
+    @Lazy
+    private InternalProductService selfProxy;
+    @Autowired
     private IProdInfoService productService;
     @Autowired
     private ProdInfoMapper prodInfoMapper;
@@ -49,71 +55,79 @@ public class InternalProductService {
     @Autowired
     private ProductRateHistoryMapper productRateHistoryMapper;
 
+    // Redis锁定库存
+    public void lockStock(Long id, BigDecimal quantity) {
+        String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
+        Long result = redisService.executeStock(stockKey, quantity);
+
+        // 1.1 处理缓存失效
+        if (result == -1) {
+            log.warn("产品 {} 缓存失效，触发同步", id);
+            try {
+                productStockService.syncProductStockToRedis(id);
+                // 同步成功后，重试一次扣减
+                result = redisService.executeStock(stockKey, quantity);
+            } catch (Exception e) {
+                log.error("同步缓存失败: {}", e.getMessage());
+                throw new BusinessException("系统繁忙，请稍后重试");
+            }
+        }
+        // 1.2 处理库存不足
+        if (result == -2 || result < 0) {
+            throw new BusinessException("产品库存不足");
+        }
+    }
+    @Transactional(rollbackFor = Exception.class)
+    //数据库库存操作
+    public void doStockInDb(Long id, BigDecimal quantity,String action) {
+        if(action.equals("LOCK")){
+            int rows = prodInfoMapper.lockStock(id, quantity);
+            if (rows == 0) {
+                throw new BusinessException("产品已被抢购空，请重试");
+            }
+        }else if(action.equals("UNLOCK")){
+            int rows=prodInfoMapper.unlockStock(id, quantity);
+            if (rows==0) {
+                throw new BusinessException("份额回滚失败");
+            }
+
+        }
+    }
+    // Redis解锁库存
+    public void unlockStock(Long id, BigDecimal quantity) {
+        // 1. 独立短事务：执行数据库回补
+        try {
+            selfProxy.doStockInDb(id, quantity,"UNLOCK");
+        } catch (Exception e) {
+            log.error("产品 {} 数据库解锁库存失败", id, e);
+            // DB 解锁失败说明底层出现严重异常，直接抛出，此时不应该去加 Redis
+            throw new BusinessException("系统异常，解锁库存失败");
+        }
+        // 2. 无事务环境：执行 Redis 份额回补
+        String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
+        Long result = null;
+        try {
+            result = redisService.incrementStock(stockKey, quantity);
+        } catch (Exception e) {
+            log.error("产品 {} Redis 回补请求发生网络异常", id, e);
+        }
+
+        // 3. 缓存兜底与同步补偿
+        // 如果 Redis 返回异常，或者根本没走到 Redis 就抛了异常（result 为 null）
+        if (result == null || result < 0) {
+            log.warn("Redis 库存回补异常，触发同步。Key: {}", stockKey);
+            try {
+                // 因为已经在事务外，读取 DB 绝对不会读到脏数据
+                productStockService.syncProductStockToRedis(id);
+            } catch (Exception e) {
+                log.error("unlockStock 同步缓存失败: {}", e.getMessage());
+            }
+        }
+    }
     // 根据产品ID获取产品信息
     public ProdInfo getById(Long productId) {
         return productService.getById(productId);
     }
-
-    // 锁定库存
-    @Transactional(rollbackFor = Exception.class)
-    public void lockStock(Long id, BigDecimal quantity) {
-        String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
-
-
-        // 1. 第一步：Redis 预扣
-        Long result = redisService.executeStock(stockKey, quantity);
-
-        if (result == -1) {
-            log.warn("产品 {} 缓存失效，触发同步", id);
-            try {
-                // 【修复点1】加上 try-catch，防止同步失败导致事务回滚异常
-                productStockService.syncProductStockToRedis(id);
-            } catch (Exception e) {
-                // 就算同步失败，也只记录日志。反正下面会抛出“让用户重试”的异常，
-                // 这样能保证异常类型是 BusinessException，而不是 UnexpectedRollbackException
-                log.error("lockStock同步缓存失败，忽略错误: {}", e.getMessage());
-            }
-            throw new BusinessException("系统繁忙，请稍后重试");
-        }
-
-        if (result == -2) {
-            throw new BusinessException("产品库存不足");
-        }
-
-        // 2. 第二步：数据库扣减
-        int rows = prodInfoMapper.lockStock(id, quantity);
-
-        if (rows == 0) {
-            // Redis 扣减成功但 DB 扣减失败，执行回滚补偿
-            redisService.incrementStock(stockKey, quantity);
-            log.error("产品 {} Redis 扣减成功但 DB 扣减失败，执行回滚补偿", id);
-            throw new BusinessException("产品已被抢购空，请重试");
-        }
-
-    }
-
-    // 解锁库存
-    @Transactional(rollbackFor = Exception.class)
-    public void unlockStock(Long id, BigDecimal quantity) {
-        // 1. 数据库回补
-        prodInfoMapper.unlockStock(id, quantity);
-
-        // 2. Redis 份额回补
-        String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
-
-        Long result = redisService.incrementStock(stockKey, quantity);
-
-        if (result == null || result < 0) {
-            log.warn("Redis 库存回补异常，触发手动同步。Key: {}", stockKey);
-            try {
-                // 【修复点2】解锁是补偿操作，绝不能因为它失败而炸毁主流程
-                productStockService.syncProductStockToRedis(id);
-            } catch (Exception e) {
-                log.error("unlockStock同步缓存失败，仅记录日志: {}", e.getMessage());
-            }
-        }
-    }
-
     // 根据一组产品ID获取产品名称映射
     public Map<Long, String> getProdNamesByIds(Set<Long> prodIds) {
         if (CollectionUtils.isEmpty(prodIds)) {
@@ -128,7 +142,6 @@ public class InternalProductService {
                 (existing, replacement) -> existing
         ));
     }
-
     // 根据一组产品ID获取产品当前净值映射
     public Map<Long, BigDecimal> getProdNavMap(Set<Long> prodIds) {
         if (CollectionUtils.isEmpty(prodIds)) {
@@ -143,7 +156,7 @@ public class InternalProductService {
                 (existing, replacement) -> existing
         ));
     }
-
+    // 根据产品ID获取产品详细信息
     public ProductDetailVO getProductDetail(@NotNull(message = "产品ID不能为空") Long productId, int i) {
         try {
             return productService.getProductDetail(productId, i);
@@ -161,13 +174,8 @@ public class InternalProductService {
             return dbDetail;
         }
     }
-
+    // 获取产品历史净值
     public List<ProductRateHistory> selectList(LambdaQueryWrapper<ProductRateHistory> eq) {
         return productRateHistoryMapper.selectList(eq);
-    }
-
-    public List<ProductVO> selectListForAgent(Integer RiskLevel) {
-        return prodInfoMapper.selectProductVOList(RiskLevel);
-
     }
 }

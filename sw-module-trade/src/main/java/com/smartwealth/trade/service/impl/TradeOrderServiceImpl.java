@@ -1,5 +1,6 @@
 package com.smartwealth.trade.service.impl;
 
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
@@ -26,6 +27,7 @@ import com.smartwealth.trade.entity.RedemptionRecord;
 import com.smartwealth.trade.entity.TradeLocalMsg;
 import com.smartwealth.trade.event.ProdPurchaseEvent;
 import com.smartwealth.trade.event.ProdRedeemEvent;
+import com.smartwealth.trade.job.SettlementTxHelper;
 import com.smartwealth.trade.mapper.DailyProfitMapper;
 import com.smartwealth.trade.mapper.RedeemRecordMapper;
 import com.smartwealth.trade.mapper.TradeLocalMsgMapper;
@@ -55,6 +57,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -78,85 +83,68 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
     @Autowired
     private TradeOrderMapper tradeOrderMapper;
     @Autowired
+    DailyProfitMapper dailyProfitMapper;
+    @Autowired
     private TradeLocalMsgMapper tradeLocalMsgMapper;
     @Autowired
     private RedeemRecordMapper redeemRecordMapper;
     @Autowired
-    private ApplicationEventPublisher eventPublisher;
+    private Tradetransactionhelper tradetransactionhelper;
     @Autowired
-    private DailyProfitMapper dailyProfitMapper;
+    private SettlementTxHelper txHelper;
+    @Autowired
+    private ThreadPoolExecutor settlementThreadPool;
 
-    // 用户申购理财产品
+    // 申购理财产品
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Result<String> purchase(Long userId, PurchaseDTO dto) {
-        // 1. 获取产品信息
         ProductDetailVO prod = productService.getProductDetail(dto.getProductId(), 7);
-        if (prod == null) return Result.fail(ResultCode.PRODUCT_NOT_EXIST);
+        if (prod == null) {
+            return Result.fail(ResultCode.PRODUCT_NOT_EXIST);
+        }
 
-        // 基础校验
         Integer userRiskLevel = userService.getUserRiskLevel(userId);
         if (userRiskLevel < prod.getBaseInfo().getRiskLevel()) {
             return Result.fail(ResultCode.RISK_LEVEL_MISMATCH);
         }
 
-        // 2. 计算份额
         BigDecimal quantity = dto.getAmount().divide(prod.getBaseInfo().getCurrentNav(), 2, RoundingMode.HALF_UP);
 
-        // 3. 【核心修改】直接调用！不要 try-catch！
-        // 如果 lockStock 抛出 BusinessException，Spring 会自动回滚事务，
-        // 并且你的 GlobalExceptionHandler 会捕获它并返回给前端 Result.fail(...)
-        productService.lockStock(dto.getProductId(), quantity);
+
 
         try {
-            // 4. 创建订单
-            TradeOrder order = new TradeOrder();
-            order.setUserId(userId);
-            order.setProdId(prod.getBaseInfo().getId());
-            order.setAmount(dto.getAmount());
-            order.setQuantity(quantity);
-            order.setAccumulatedIncome(BigDecimal.ZERO);
+            productService.lockStock(dto.getProductId(), quantity);
+        } catch (BusinessException be) {
+            // 如果 Lua 脚本判断库存不足，直接阻断，返回给前端
+            log.warn("Redis库存扣减拦截: {}", be.getMessage());
+            return Result.fail(be.getCode(), be.getMessage());
+        } catch (Exception e) {
+            // Redis 宕机或网络超时，直接判定系统异常，未扣减成功，安全退出
+            return Result.fail(ResultCode.FAILURE);
+        }
 
-            order.setProdNameSnap(prod.getBaseInfo().getName());
-            order.setRateSnap(prod.getBaseInfo().getLatestRate());
-            order.setStatus(TradeStatusEnum.PENDING);
-            order.setExpireTime(LocalDateTime.now().plusDays(prod.getBaseInfo().getCycle()));
-
-            this.save(order);
-
-            // 5. 保存本地消息表
-            TradeLocalMsg msg = new TradeLocalMsg();
-            msg.setMsgId(order.getId().toString());
-            msg.setTopic("ex.trade.purchase");
-            msg.setStatus(0);
-            msg.setRetryCount(0);
-
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("userId", userId);
-            payload.put("amount", dto.getAmount());
-            payload.put("share", quantity);
-            payload.put("orderId", order.getId());
-            payload.put("productId", dto.getProductId());
-            payload.put("payPassword", dto.getPayPassword());
-            msg.setContent(JSON.toJSONString(payload));
-
-            tradeLocalMsgMapper.insert(msg);
-
-            eventPublisher.publishEvent(new ProdPurchaseEvent(this, msg));
-
-            return Result.success(order.getId().toString() + "申购申请已受理");
+        // ==========================================
+        // 1.5 执行极速数据库事务 (磁盘 I/O 层)
+        // ==========================================
+        try {
+            // 进入我们在步骤 2 写的纯粹 DB 逻辑。
+            // 此时才会向连接池申请 1 个 MySQL 连接，并在几毫秒内用完即释放。
+            return tradetransactionhelper.createOrderAndMessage(userId, dto, prod, quantity);
 
         } catch (Exception e) {
-            // 6. 异常处理：这里的 try-catch 是为了回滚 Redis 库存（补偿）
-            // 因为 Redis 不受 Spring 事务控制，必须手动回滚
+            log.error("落库事务执行失败，触发 Redis 库存补偿回滚", e);
+
             try {
+                // 调用解锁方法（同样需要传入 traceId 进行精准回滚）
                 productService.unlockStock(dto.getProductId(), quantity);
+                log.info("Redis 库存补偿回滚成功");
             } catch (Exception ex) {
-                log.error("【严重告警】申购异常回滚时，Redis 额度补偿失败！产品ID: {}, 数量: {}",
-                        dto.getProductId(), quantity, ex);
+                // 严重灾难：DB 没写进去，准备回滚 Redis 时，Redis 网络也断了！
+                // 此时库存发生实质性泄露。这就是为什么必须要有兜底的定时任务（步骤3）。
+                log.error("【严重告警】落库失败且 Redis 回滚也失败！发生库存泄露！必须依赖兜底任务修复。 quantity:{}", quantity, ex);
             }
-            // 【必须】继续抛出异常，触发 DB 事务回滚
-            throw e;
+
+            return Result.fail(ResultCode.FAILURE.getCode(), "系统繁忙，申购失败");
         }
     }
 
@@ -199,113 +187,18 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
         return Result.success(voPage);
     }
 
+    // 赎回理财产品
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Result<String> redeemByProduct(Long userId, RedemptionDTO dto) {
-        // 1. 并发预锁 (保持原样)
-        assetService.selectprelock(userId);
-
-        // 2. 查找符合条件的持仓订单 (FIFO)
-        List<TradeOrder> eligibleOrders = this.list(new LambdaQueryWrapper<TradeOrder>()
-                .eq(TradeOrder::getUserId, userId)
-                .eq(TradeOrder::getProdId, dto.getProductId())
-                .eq(TradeOrder::getStatus, TradeStatusEnum.HOLDING)
-                .orderByAsc(TradeOrder::getCreateTime));
-
-        // 3. 校验“可用份额”
-        BigDecimal totalAvailable = eligibleOrders.stream()
-                .map(o -> o.getQuantity().subtract(o.getFrozenQuantity()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        if (totalAvailable.compareTo(dto.getRedeemQuantity()) < 0) {
-            return Result.fail(ResultCode.HOLDING_NOT_ENOUGH);
-        }
-
-        // 4. 初始化数据
-        ProdInfo prod = productService.getById(dto.getProductId());
-        BigDecimal currentNav = prod.getCurrentNav();
-        BigDecimal remainingNeed = dto.getRedeemQuantity();
-
-        Long requestId = IdWorker.getId();
-        List<TradeOrder> ordersToUpdate = new ArrayList<>();
-
-        // --- 【新增】用于记录冻结明细的快照清单 ---
-        List<Map<String, Object>> freezeDetails = new ArrayList<>();
-
-        BigDecimal totalRedeemAmount = BigDecimal.ZERO;
-        BigDecimal totalRealizedProfit = BigDecimal.ZERO;
-
-        for (TradeOrder order : eligibleOrders) {
-            if (remainingNeed.compareTo(BigDecimal.ZERO) <= 0) break;
-
-            BigDecimal orderAvailable = order.getQuantity().subtract(order.getFrozenQuantity());
-            if (orderAvailable.compareTo(BigDecimal.ZERO) <= 0) continue;
-
-            BigDecimal canRedeem = orderAvailable.min(remainingNeed);
-
-            // 核心逻辑：增加订单冻结
-            order.setFrozenQuantity(order.getFrozenQuantity().add(canRedeem));
-            order.setUpdateTime(LocalDateTime.now());
-            ordersToUpdate.add(order);
-
-            // 1. 先计算本金扣减额 (把这段计算提到 Map 封装之前)
-            // 逻辑：(本次赎回份额 / 订单总份额) * 订单总本金
-            BigDecimal costReduction = canRedeem
-                    .divide(order.getQuantity(), 8, RoundingMode.HALF_UP)
-                    .multiply(order.getAmount())
-                    .setScale(2, RoundingMode.HALF_UP); // 建议存库用2位小数
-
-            // 2. 【核心修改】将本金扣减额也记录到明细中！
-            Map<String, Object> detail = new HashMap<>();
-            detail.put("orderId", order.getId());
-            detail.put("amount", canRedeem);
-            detail.put("principal", costReduction);
-            freezeDetails.add(detail);
-
-            // 3. 计算收益 (保持原样)
-            BigDecimal redeemValue = canRedeem.multiply(currentNav).setScale(4, RoundingMode.HALF_UP);
-            BigDecimal incrementalProfit = redeemValue.subtract(costReduction);
-
-            totalRedeemAmount = totalRedeemAmount.add(redeemValue);
-            totalRealizedProfit = totalRealizedProfit.add(incrementalProfit);
-
-            remainingNeed = remainingNeed.subtract(canRedeem);
-        }
-
-        // 5. 落流水表 (带上冻结清单快照)
-        RedemptionRecord record = RedemptionRecord.builder()
-                .userId(userId)
-                .productId(dto.getProductId())
-                .amount(dto.getRedeemQuantity())
-                .requestId(requestId)
-                .status(RedemptionRecord.Status.APPLYING) // 👈 注意：用 .getCode()
-                .freezeDetails(JSON.toJSONString(freezeDetails)) // 👈 【核心】把清单存进去
-                .build();
-        redeemRecordMapper.insert(record);
-
-        // 6. 执行批量更新
-        this.updateBatchById(ordersToUpdate);
-
-        // 7. 写入 Payload
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("requestId", requestId);
-        payload.put("userId", userId);
-        payload.put("amount", totalRedeemAmount.setScale(4, RoundingMode.HALF_UP));
-        payload.put("share", dto.getRedeemQuantity());
-        payload.put("profit", totalRealizedProfit.setScale(4, RoundingMode.HALF_UP));
-        payload.put("productId", dto.getProductId());
-        payload.put("remark", "理财赎回入账");
-
-        TradeLocalMsg localMsg = new TradeLocalMsg();
-        localMsg.setMsgId(requestId.toString());
-        localMsg.setTopic(RabbitConfig.REDEMPTION_EXCHANGE);
-        localMsg.setContent(JSON.toJSONString(payload));
-        localMsg.setStatus(0);
-        tradeLocalMsgMapper.insert(localMsg);
-
-        eventPublisher.publishEvent(new ProdRedeemEvent(this, localMsg));
-
-        return Result.success("赎回申请已提交，预计到账金额：" + totalRedeemAmount.setScale(2, RoundingMode.HALF_UP));
+            // 1. 提前查询静态/弱一致性产品信息（剥离出强事务，避免在持锁期间发起额外 IO）
+            ProdInfo prod = productService.getById(dto.getProductId());
+            if (prod == null) {
+                return Result.fail(ResultCode.PRODUCT_NOT_EXIST);
+            }
+            // 2. 提前生成全局唯一的请求流水号（剥离 CPU 计算）
+            Long requestId = IdWorker.getId();
+            log.info("开始处理赎回请求, userId:{}, productId:{}, requestId:{}", userId, dto.getProductId(), requestId);
+            return tradetransactionhelper.executeRedeemWithPessimisticLock(userId, dto, prod, requestId);
     }
 
     // 分页查询订单历史
@@ -426,234 +319,237 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void handleRedemptionResult(Long requestId, boolean success, String reason) {
-        // 1. 幂等校验：通过 requestId 锁住流水记录
+        // 1. 悲观锁：锁住当前流水，杜绝并发重试的交叉污染
         RedemptionRecord record = redeemRecordMapper.selectForUpdate(requestId);
-
         if (record == null) {
             log.error("【致命异常】未找到赎回流水记录，requestId: {}", requestId);
             return;
         }
 
-        // 如果流水状态已经不是“申请中”，说明已经处理过了，直接返回
+        // 状态防重：如果不是“申请中”，立刻拦截
         if (record.getStatus() != RedemptionRecord.Status.APPLYING) {
-            log.warn("赎回流水 {} 已经是终态（{}），忽略重复回执", requestId, record.getStatus());
+            log.warn("赎回流水 {} 已经是终态，忽略重复回执", requestId);
             return;
         }
 
-        // 2. 【关键：解析小抄】从流水记录中解析出当时冻结的订单清单
         String freezeDetailsJson = record.getFreezeDetails();
-        if (StrUtil.isBlank(freezeDetailsJson)) {
-            log.error("【数据异常】流水 {} 缺少冻结明细快照", requestId);
-            return;
-        }
-
-        // 解析为 List<Map> 或专门的 DTO
         List<JSONObject> details = JSON.parseArray(freezeDetailsJson, JSONObject.class);
+        if (CollUtil.isEmpty(details)) return;
+
+        // 【核心修复 2】：提取所有关联订单 ID，一次性查出，消灭 N+1 查询
+        List<Long> orderIds = details.stream().map(d -> d.getLong("orderId")).collect(Collectors.toList());
+        Map<Long, TradeOrder> orderMap = this.listByIds(orderIds).stream()
+                .collect(Collectors.toMap(TradeOrder::getId, Function.identity()));
+
+        List<TradeOrder> ordersToUpdate = new ArrayList<>();
 
         if (success) {
-            // --- 情况 A：赎回成功 ---
+            // ==================== 情况 A：打款成功，执行硬扣减 ====================
             for (JSONObject detail : details) {
                 Long orderId = detail.getLong("orderId");
-                BigDecimal redeemShares = detail.getBigDecimal("amount"); // 本次赎回的份额
+                BigDecimal redeemShares = detail.getBigDecimal("amount"); // 冻结的份额
 
-                // 1. 【关键】先查出当前订单的最新状态
-                //我们需要它的 currentQuantity 和 accumulatedIncome 来算比例
-                TradeOrder currentOrder = this.getById(orderId);
+                TradeOrder currentOrder = orderMap.get(orderId);
+                if (currentOrder == null) continue;
 
-                if (currentOrder == null) {
-                    log.error("订单不存在或已丢失: {}", orderId);
-                    continue;
-                }
-
-                // 2. 获取本金扣减额 (兼容旧数据)
                 BigDecimal redeemPrincipal = detail.getBigDecimal("principal");
-                if (redeemPrincipal == null) {
-                    // 如果前端没传本金，为了保险，我们可以按比例反算：当前本金 * (赎回份额 / 当前份额)
-                    if (currentOrder.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal incomeToDeduct = BigDecimal.ZERO;
+
+                // 【核心修复 3】：尾差终结者 —— 判断是否为“最后一笔”
+                if (redeemShares.compareTo(currentOrder.getQuantity()) == 0) {
+                    // 1. 全额赎回：放弃乘除法比例，直接把剩余的本金和收益全部清空！
+                    if (redeemPrincipal == null) {
+                        redeemPrincipal = currentOrder.getAmount();
+                    }
+                    incomeToDeduct = currentOrder.getAccumulatedIncome() != null ?
+                            currentOrder.getAccumulatedIncome() : BigDecimal.ZERO;
+                } else {
+                    // 2. 部分赎回：依然使用高精度比例计算
+                    if (redeemPrincipal == null && currentOrder.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
                         BigDecimal ratio = redeemShares.divide(currentOrder.getQuantity(), 10, RoundingMode.HALF_UP);
                         redeemPrincipal = currentOrder.getAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
-                    } else {
-                        redeemPrincipal = BigDecimal.ZERO;
+                    }
+                    if (currentOrder.getQuantity().compareTo(BigDecimal.ZERO) > 0 && currentOrder.getAccumulatedIncome() != null) {
+                        BigDecimal ratio = redeemShares.divide(currentOrder.getQuantity(), 10, RoundingMode.HALF_UP);
+                        incomeToDeduct = currentOrder.getAccumulatedIncome().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
                     }
                 }
 
-                // 3. 【核心新增】计算需要扣除的累计收益
-                // 公式：扣除收益 = 当前累计收益 * (本次赎回份额 / 当前持有份额)
-                BigDecimal incomeToDeduct = BigDecimal.ZERO;
+                // 【内存计算】：在内存中算出最新状态，而不是每算一次就 update 一次数据库
+                currentOrder.setQuantity(currentOrder.getQuantity().subtract(redeemShares));
+                currentOrder.setFrozenQuantity(currentOrder.getFrozenQuantity().subtract(redeemShares)); // 成功了，冻结份额也要减掉
+                currentOrder.setAmount(currentOrder.getAmount().subtract(redeemPrincipal));
 
-                // 防御性编程：防止除以0
-                if (currentOrder.getQuantity().compareTo(BigDecimal.ZERO) > 0 &&
-                        currentOrder.getAccumulatedIncome() != null) {
+                if (currentOrder.getAccumulatedIncome() != null) {
+                    currentOrder.setAccumulatedIncome(currentOrder.getAccumulatedIncome().subtract(incomeToDeduct));
+                    // 【核心修复】：生成一条负数的收益流水，用于平账！
+                    DailyProfit negativeProfit = new DailyProfit();
+                    negativeProfit.setId(IdWorker.getId());
+                    negativeProfit.setOrderId(currentOrder.getId());
+                    negativeProfit.setUserId(currentOrder.getUserId());
+                    negativeProfit.setProdId(currentOrder.getProdId());
+                    // 关键：变成负数
+                    negativeProfit.setDailyProfit(incomeToDeduct.negate());
+                    negativeProfit.setProfitDate(LocalDate.now());
+                    negativeProfit.setType(2); // 假设 2 代表“赎回结转结息”
 
-                    // 计算比例
-                    BigDecimal ratio = redeemShares.divide(currentOrder.getQuantity(), 10, RoundingMode.HALF_UP);
-
-                    // 计算应扣金额
-                    incomeToDeduct = currentOrder.getAccumulatedIncome()
-                            .multiply(ratio)
-                            .setScale(2, RoundingMode.HALF_UP); // 收益保留2位小数
+                    dailyProfitMapper.insert(negativeProfit);
                 }
 
-                // 4. 【修改】调用 Mapper，同时扣减 份额、本金、累计收益
-                // 方法名建议改为 deductPositions (扣减持仓)
-                int rows = tradeOrderMapper.deductPositions(orderId, redeemShares, redeemPrincipal, incomeToDeduct);
-
-                if (rows == 0) {
-                    log.warn("订单扣减失败（可能余额不足或并发冲突）: {}", orderId);
-                    throw new BusinessException("赎回扣减失败"); // 抛异常回滚事务
+                // 状态流转：份额扣光了，订单彻底结清
+                if (currentOrder.getQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+                    currentOrder.setStatus(TradeStatusEnum.REDEEMED);
                 }
 
-                // 5. 判定该子订单是否结清
-                // 因为刚才已经扣减了数据库，我们判断剩余份额
-                // 注意：这里的 currentOrder 是旧快照，不能用来判断，要用扣减后的逻辑推算，或者简单点再次查询(如果不介意性能)，
-                // 或者直接判断 redeemShares 是否等于 currentOrder.getQuantity()
-
-                // 比较安全的做法：如果赎回份额 >= 持有份额，直接更新状态
-                if (redeemShares.compareTo(currentOrder.getQuantity()) >= 0) {
-                    // 只有当完全赎回时，状态才变更为 REDEEMED (已赎回/已结清)
-                    // 注意：这里需要 update status where id = ?
-                    tradeOrderMapper.updateStatus(orderId, TradeStatusEnum.REDEEMED.getValue());
-                }
+                currentOrder.setUpdateTime(LocalDateTime.now());
+                ordersToUpdate.add(currentOrder);
             }
+
+            // 【核心修复 1】：补上最致命的状态流转，防止死循环二次扣减
+            record.setStatus(RedemptionRecord.Status.SUCCESS);
+
         } else {
-            // --- 情况 B：赎回失败 ---
+            // ==================== 情况 B：打款失败，执行解冻退回 ====================
             for (JSONObject detail : details) {
                 Long orderId = detail.getLong("orderId");
-                BigDecimal amount = detail.getBigDecimal("amount");
+                BigDecimal amount = detail.getBigDecimal("amount"); // 当初冻结的份额
 
-                // a. 逻辑解冻（只减冻结份额）
-                tradeOrderMapper.onlyUnfreeze(orderId, amount);
+                TradeOrder currentOrder = orderMap.get(orderId);
+                if (currentOrder != null) {
+                    // 内存计算：只把冻结的份额减回去，总份额不动
+                    currentOrder.setFrozenQuantity(currentOrder.getFrozenQuantity().subtract(amount));
+                    currentOrder.setUpdateTime(LocalDateTime.now());
+                    ordersToUpdate.add(currentOrder);
+                }
             }
-
-            // b. 更新流水状态
             record.setStatus(RedemptionRecord.Status.FAIL);
             record.setFailReason(reason);
-
-            log.error("赎回流水 {} 失败：原因 {}。涉及订单已批量原路解冻", requestId, reason);
         }
 
+        // 最终阶段：统一落盘 (1次订单批量更新 IO + 1次流水更新 IO)
+        if (CollUtil.isNotEmpty(ordersToUpdate)) {
+            this.updateBatchById(ordersToUpdate);
+        }
         redeemRecordMapper.updateById(record);
     }
-
-    //每日订单结算任务
 
     /**
      * 执行每日收益结算
      * 建议在每日净值更新任务完成后调用
      */
-    @Transactional(rollbackFor = Exception.class)
     @Override
-    public void executeDailySettlement() {
-        LocalDate bizDate = LocalDate.now().minusDays(1);
-        Long count = dailyProfitMapper.selectCount(
-                new LambdaQueryWrapper<DailyProfit>()
-                        .eq(DailyProfit::getProfitDate, bizDate) // 查昨天
-                        .last("LIMIT 1")
-        );
+    public void executeDailySettlementWithSharding(LocalDate bizDate, int shardIndex, int shardTotal) {
+        log.info("========== 分片[{}/{}] {} 开始结算 ==========", shardIndex, shardTotal, bizDate);
 
-        if (count > 0) {
-            log.warn("日期 {} 的收益已结算过，跳过本次执行，防止重复加钱！", bizDate);
+        // 1. 预计算每个产品的单位收益
+        Map<Long, BigDecimal> unitProfitMap = preCalculateRates(bizDate);
+        if (unitProfitMap.isEmpty()) {
+            log.info("今日产品净值无波动或无记录，提前结束。");
             return;
         }
-        log.info("========== 开始执行 {} 每日收益结算 ==========", bizDate);
 
-        // 1. 获取今日所有产品的净值记录
-        // 对应表: t_prod_rate_history
+        int fetchSize = 5000;
+        long lastId = 0L;
+
+        // 2. 游标分页拉取
+        while (true) {
+            List<TradeOrder> orders = tradeOrderMapper.selectUnsettledOrders(lastId, fetchSize, shardIndex, shardTotal, bizDate);
+            if (CollectionUtils.isEmpty(orders)) {
+                log.info("分片[{}] 无待结算订单，退出主循环。", shardIndex);
+                break;
+            }
+
+            lastId = orders.get(orders.size() - 1).getId();
+
+            // 3. 将 5000 条切割成 5 份，每份 1000 条
+            List<List<TradeOrder>> partitions = partitionList(orders, 1000);
+            CountDownLatch latch = new CountDownLatch(partitions.size());
+
+            // 4. 多线程并发计算与落库
+            for (List<TradeOrder> batchOrders : partitions) {
+                settlementThreadPool.execute(() -> {
+                    try {
+                        processAndSaveBatch(batchOrders, unitProfitMap, bizDate);
+                    } catch (Exception e) {
+                        log.error("批次处理异常，跳过该批次继续执行", e);
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+            }
+
+            // 5. 等待这一大批全部处理完
+            try {
+                latch.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("主线程等待超时被中断");
+            }
+        }
+        log.info("========== 分片[{}] 每日结算完成 ==========", shardIndex);
+    }
+
+    private void processAndSaveBatch(List<TradeOrder> batchOrders, Map<Long, BigDecimal> unitProfitMap, LocalDate bizDate) {
+        List<DailyProfit> profitInsertList = new ArrayList<>();
+        List<TradeOrder> orderUpdateList = new ArrayList<>();
+
+        for (TradeOrder order : batchOrders) {
+            BigDecimal unitProfit = unitProfitMap.get(order.getProdId());
+            if (unitProfit == null || unitProfit.compareTo(BigDecimal.ZERO) == 0) continue;
+
+            BigDecimal dailyProfitAmt = order.getQuantity().multiply(unitProfit).setScale(4, RoundingMode.HALF_UP);
+            if (dailyProfitAmt.compareTo(BigDecimal.ZERO) == 0) continue;
+
+            // 组装流水
+            DailyProfit profitLog = new DailyProfit();
+            profitLog.setId(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId());
+            profitLog.setOrderId(order.getId());
+            profitLog.setUserId(order.getUserId());
+            profitLog.setProdId(order.getProdId());
+            profitLog.setDailyProfit(dailyProfitAmt);
+            profitLog.setProfitDate(bizDate);
+            profitLog.setType(1);
+            profitInsertList.add(profitLog);
+
+            // 组装订单累计收益更新参数
+            TradeOrder updateVo = new TradeOrder();
+            updateVo.setId(order.getId());
+            updateVo.setAccumulatedIncome(dailyProfitAmt);
+            orderUpdateList.add(updateVo);
+        }
+
+        // 调用微事务入库
+        if (!profitInsertList.isEmpty() || !orderUpdateList.isEmpty()) {
+            txHelper.doBatchSave(profitInsertList, orderUpdateList);
+        }
+    }
+
+    private Map<Long, BigDecimal> preCalculateRates(LocalDate bizDate) {
         List<ProductRateHistory> historyList = productService.selectList(
-                new LambdaQueryWrapper<ProductRateHistory>()
-                        .eq(ProductRateHistory::getRecordDate, bizDate)
+                new LambdaQueryWrapper<ProductRateHistory>().eq(ProductRateHistory::getRecordDate, bizDate)
         );
-
-        if (CollectionUtils.isEmpty(historyList)) {
-            log.warn("今日无净值记录，无法结算。请检查净值更新任务是否执行。");
-            return;
-        }
-
-        // 2. 预计算每个产品的“每份收益 (Delta NAV)”
-        // Map<ProdId, UnitProfit>
-        Map<Long, BigDecimal> unitProfitMap = new HashMap<>();
+        Map<Long, BigDecimal> map = new HashMap<>();
+        if (CollectionUtils.isEmpty(historyList)) return map;
 
         for (ProductRateHistory history : historyList) {
             BigDecimal currentNav = history.getNav();
-            BigDecimal rate = history.getRate(); // 当日涨跌幅
+            BigDecimal rate = history.getRate();
+            if (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) continue;
 
-            // 如果今日没涨跌，跳过
-            if (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) {
-                continue;
-            }
-
-            // 核心推导：根据今日净值和涨幅，反推昨日净值，算出差价
-            // 公式：OldNav = CurrentNav / (1 + Rate)
-            // 差价 Delta = CurrentNav - OldNav
             BigDecimal divisor = BigDecimal.ONE.add(rate);
             BigDecimal oldNav = currentNav.divide(divisor, 10, RoundingMode.HALF_UP);
             BigDecimal deltaNav = currentNav.subtract(oldNav);
-
-            unitProfitMap.put(history.getProdId(), deltaNav);
+            map.put(history.getProdId(), deltaNav);
         }
+        return map;
+    }
 
-        if (unitProfitMap.isEmpty()) {
-            log.info("今日所有产品净值无波动，无需结算。");
-            return;
+    private <T> List<List<T>> partitionList(List<T> list, int size) {
+        List<List<T>> parts = new ArrayList<>();
+        for (int i = 0; i < list.size(); i += size) {
+            parts.add(new ArrayList<>(list.subList(i, Math.min(list.size(), i + size))));
         }
-
-        // 3. 分批处理订单更新 (防止一次性拉取太多订单导致 OOM)
-        int batchSize = 1000;
-        long lastId = 0L;
-
-        while (true) {
-            // 查出所有持仓中的订单
-            List<TradeOrder> orders = tradeOrderMapper.selectBatchForSettlement(lastId, batchSize);
-            if (CollectionUtils.isEmpty(orders)) break;
-
-            // 准备两个集合：一个用于批量插入流水，一个用于批量更新订单
-            List<DailyProfit> profitInsertList = new ArrayList<>();
-            List<TradeOrder> orderUpdateList = new ArrayList<>();
-
-            for (TradeOrder order : orders) {
-                lastId = order.getId(); // 更新游标
-
-                BigDecimal unitProfit = unitProfitMap.get(order.getProdId());
-                if (unitProfit == null || unitProfit.compareTo(BigDecimal.ZERO) == 0) continue;
-
-                // --- 计算收益 ---
-                // 收益 = 持有份额 * 单位净值差
-                BigDecimal dailyProfitAmt = order.getQuantity().multiply(unitProfit)
-                        .setScale(4, RoundingMode.HALF_UP);
-
-                if (dailyProfitAmt.compareTo(BigDecimal.ZERO) == 0) continue;
-
-                // --- A. 准备插入流水表 (t_trade_daily_profit) ---
-                DailyProfit profitLog = new DailyProfit();
-                profitLog.setId(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId());
-                profitLog.setOrderId(order.getId());
-                profitLog.setUserId(order.getUserId());
-                profitLog.setProdId(order.getProdId());
-                profitLog.setDailyProfit(dailyProfitAmt);
-                profitLog.setProfitDate(bizDate);
-                profitLog.setType(1); // 假设 1 代表"净值收益"
-
-                profitInsertList.add(profitLog);
-
-                // --- B. 准备更新订单表 (t_trade_order) ---
-                TradeOrder updateVo = new TradeOrder();
-                updateVo.setId(order.getId());
-                updateVo.setAccumulatedIncome(dailyProfitAmt); // 暂存增量，Mapper里做加法
-
-                orderUpdateList.add(updateVo);
-            }
-
-            // 3. 批量执行数据库操作 (减少 IO 次数)
-            if (!profitInsertList.isEmpty()) {
-                // 批量插入流水
-                dailyProfitMapper.insertBatch(profitInsertList);
-
-                // 批量更新订单累计收益
-                tradeOrderMapper.batchAddIncome(orderUpdateList);
-            }
-        }
-
-        log.info("========== 每日结算完成 ==========");
+        return parts;
     }
 
     @Override

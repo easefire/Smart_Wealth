@@ -25,36 +25,32 @@ public class TradeJobHandler {
      */
     @XxlJob("dailySettlementJobHandler")
     public void dailySettlementJobHandler() {
-        // 1. 记录任务开始
-        // 注意：这里打印的日期是 "昨天"，明确告诉运维我们在算哪一天的账
         LocalDate bizDate = LocalDate.now().minusDays(1);
-        XxlJobHelper.log("========== 开始执行每日收益结算 ==========");
-        XxlJobHelper.log("当前物理时间: " + System.currentTimeMillis());
-        XxlJobHelper.log("业务结算日期 (T-1): " + bizDate);
 
+        // 1. 抓取分片参数（如果单机直接运行，默认 0 和 1）
+        int shardIndex = XxlJobHelper.getShardIndex();
+        int shardTotal = XxlJobHelper.getShardTotal();
+        if (shardTotal == 0) {
+            shardIndex = 0;
+            shardTotal = 1;
+        }
+
+        XxlJobHelper.log("========== 收益结算开始 | 分片: {}/{} | 业务日期: {} ==========", shardIndex, shardTotal, bizDate);
         long startTime = System.currentTimeMillis();
 
         try {
             // 2. 调用核心业务逻辑
-            // Service 内部已经处理了 minusDays(1) 的逻辑，这里直接调即可
-            tradeOrderService.executeDailySettlement();
+            tradeOrderService.executeDailySettlementWithSharding(bizDate, shardIndex, shardTotal);
 
-            // 3. 记录成功状态
             long costTime = System.currentTimeMillis() - startTime;
-            XxlJobHelper.log("结算成功，耗时: " + costTime + "ms");
-            XxlJobHelper.handleSuccess("业务日期[" + bizDate + "]结算完成");
+            XxlJobHelper.handleSuccess(String.format("分片[%d/%d] 结算成功，耗时: %d ms", shardIndex, shardTotal, costTime));
 
         } catch (Exception e) {
-            // 4. 异常处理
-            log.error("每日收益结算失败", e);
-
-            // 记录详细堆栈到 XXL-JOB 日志控制台，方便排查
+            log.error("收益结算严重异常", e);
             XxlJobHelper.log(e);
-
-            // 标记任务失败，触发 XXL-JOB 的邮件/钉钉报警
             XxlJobHelper.handleFail("结算异常: " + e.getMessage());
         } finally {
-            XxlJobHelper.log("========== 结算任务结束 ==========");
+            XxlJobHelper.log("========== 收益结算结束 ==========");
         }
     }
 

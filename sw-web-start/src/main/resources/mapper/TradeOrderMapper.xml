@@ -27,18 +27,10 @@
         WHERE id = #{id}
     </update>
     <update id="batchAddIncome">
-        UPDATE t_trade_order
-        SET
-        accumulated_income = accumulated_income +
-        CASE id
-        <foreach collection="list" item="item">
-            WHEN #{item.id} THEN #{item.accumulatedIncome}
-        </foreach>
-        END,
-        update_time = NOW()
-        WHERE id IN
-        <foreach collection="list" item="item" open="(" separator="," close=")">
-            #{item.id}
+        <foreach collection="list" item="item" separator=";">
+            UPDATE t_trade_order
+            SET accumulated_income = accumulated_income + #{item.accumulatedIncome}
+            WHERE id = #{item.id}
         </foreach>
     </update>
 
@@ -72,6 +64,19 @@
                 ) AS amount
         FROM t_trade_order
         GROUP BY user_id, prod_id
+    </select>
+    <select id="selectUnsettledOrders" resultType="com.smartwealth.trade.entity.TradeOrder">
+        SELECT o.* FROM t_trade_order o
+        WHERE o.status = 'HOLDING'
+          AND o.id > #{lastId}
+          AND MOD(o.user_id, #{shardTotal}) = #{shardIndex}
+          AND NOT EXISTS (
+            SELECT 1 FROM t_trade_daily_profit p
+            WHERE p.order_id = o.id
+              AND p.profit_date = #{bizDate}
+        )
+        ORDER BY o.id ASC
+            LIMIT #{fetchSize}
     </select>
 
 </mapper>

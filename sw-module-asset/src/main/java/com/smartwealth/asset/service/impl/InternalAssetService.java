@@ -155,14 +155,16 @@ public class InternalAssetService {
                         // B. 发送成功，更新本地消息状态为 1
                         localMsgService.updateStatusSuccess(localMsg.getId());
                     } catch (Exception e) {
-                        log.warn("业务扣款失败: {}", e.getMessage());
-                        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-                        // B. 【独立事务】保存“失败”消息到本地表
-                        // 必须用 REQUIRES_NEW，否则会被上面的 setRollbackOnly 带着一起回滚！
-                        localMsgService.saveFailMsgInNewTx(orderId, "MSG_PURC_RES_", e.getMessage());
-
-                        // C. 抛出异常，通知外层 Listener 这是个业务失败 (Listener 会捕获并 ACK)
-                        throw e;
+                        // 【修改点 1】删除了 setRollbackOnly()。因为事务已提交，调用它毫无意义且容易引起误解。
+                        log.error("【告警】动账已成功，但回传MQ结果失败。订单号: {}。将由定时任务补偿发送。", orderId, e);
+                        try {
+                            // 【修改点 2】使用独立事务 (REQUIRES_NEW) 更新这条本地消息的状态为 2 (发送失败)
+                            // 并记录失败原因，方便排查。如果保持 status=0 也可以，看你的业务定义。
+                            localMsgService.saveFailMsgInNewTx(orderId, "MSG_PURC_RES_", e.getMessage());
+                        } catch (Exception ex) {
+                            // 连写库都失败了，只能打日志，依靠定时任务扫描 status=0 的记录
+                            log.error("【严重告警】更新本地消息失败，消息ID: {}", localMsg.getId(), ex);
+                        }
                     }
                 }
             });
@@ -198,7 +200,7 @@ public class InternalAssetService {
         BigDecimal share = dto.getShare();
         Long requestId = dto.getRequestId(); // 赎回记录ID
 
-        if (this.isProcessed(requestId, TransactionTypeEnum.PURCHASE)) {
+        if (this.isProcessed(requestId, TransactionTypeEnum.REDEEM)) {
             log.warn("订单 {} 已扣款成功，忽略重复请求", requestId);
             return;
         }
@@ -211,10 +213,13 @@ public class InternalAssetService {
                     .last("FOR UPDATE"));
             if (wallet == null) throw new BusinessException("用户钱包不存在");
 
-            // 3. 更新余额
-            wallet.setBalance(wallet.getBalance().add(amount)); // 加钱
-            wallet.setUpdateTime(LocalDateTime.now());
-            walletMapper.updateById(wallet);
+            // 3. 乐观锁更新余额
+            walletMapper.update(null, new LambdaUpdateWrapper<AssetWallet>()
+                    .eq(AssetWallet::getUserId, userId)
+                    .eq(AssetWallet::getVersion, wallet.getVersion())
+                    .set(AssetWallet::getBalance, wallet.getBalance().add(amount))
+                    .set(AssetWallet::getVersion, wallet.getVersion() + 1));
+
 
             // 4. 记录流水 (你的逻辑是对的，分为本金和收益)
             BigDecimal principal = amount.subtract(profit);
@@ -246,12 +251,16 @@ public class InternalAssetService {
                         // B. 更新本地消息状态为 1
                         localMsgService.updateStatusSuccess(localMsg.getId());
                     } catch (Exception e) {
-                        log.error("赎回回执即时发送失败，等待 Job 兜底: {}", requestId, e);
+                        log.error("【告警】动账已成功，但回传MQ结果失败。订单号: {}。将由定时任务补偿发送。", requestId, e);
+                        try {
+                            localMsgService.saveFailMsgInNewTx(requestId, "MSG_REED_RES_", e.getMessage());
+                        } catch (Exception ex) {
+                            // 连写库都失败了，只能打日志，依靠定时任务扫描 status=0 的记录
+                            log.error("【严重告警】更新本地消息失败，消息ID: {}", localMsg.getId(), ex);
+                        }
                     }
                 }
             });
-
-            // ======================== 新增核心逻辑 END ========================
 
         } catch (BusinessException e) {
             // ======================== 失败处理 START ========================

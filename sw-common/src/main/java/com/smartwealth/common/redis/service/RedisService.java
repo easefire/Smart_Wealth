@@ -1,8 +1,11 @@
 package com.smartwealth.common.redis.service;
 
+import org.springframework.data.redis.core.RedisOperations;
+
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -42,4 +45,6 @@ public interface RedisService {
     BigDecimal getRedisStock(Long id);
 
     Set<String> getkeys(String s);
+
+    void setPipelinedEx(Map<String, Object> cacheData, long finalTtlSeconds, TimeUnit timeUnit);
 }

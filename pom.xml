@@ -17,7 +17,6 @@
         <module>sw-module-trade</module>
         <module>sw-web-start</module>
         <module>sw-module-wealth</module>
-        <module>sw-module-agent</module>
     </modules>
 
     <properties>

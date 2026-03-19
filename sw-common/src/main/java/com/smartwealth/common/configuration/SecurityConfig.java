@@ -1,6 +1,5 @@
 package com.smartwealth.common.configuration;
 
-import com.smartwealth.common.filter.InternalServiceFilter;
 import com.smartwealth.common.filter.JwtAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -23,8 +22,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
-    @Autowired
-    private InternalServiceFilter internalServiceFilter;
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -55,8 +52,8 @@ public class SecurityConfig {
                         })
                 )
                 // 4. 关键：确保内部校验在最前面
-                .addFilterBefore(internalServiceFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(jwtAuthenticationFilter, InternalServiceFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
 
         return http.build();
     }

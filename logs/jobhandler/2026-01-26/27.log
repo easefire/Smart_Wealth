@@ -1,8 +1,0 @@
-2026-01-26 18:07:45 [com.xxl.job.core.thread.JobThread#run]-[134]-[xxl-job, JobThread-7-1769422065129] <br>----------- xxl-job job execute start -----------<br>----------- Param:
-2026-01-26 18:07:45 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[29]-[xxl-job, JobThread-7-1769422065129] ========== 开始执行每日收益结算 ==========
-2026-01-26 18:07:45 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[30]-[xxl-job, JobThread-7-1769422065129] 当前物理时间: 1769422065132
-2026-01-26 18:07:45 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[31]-[xxl-job, JobThread-7-1769422065129] 业务结算日期 (T-1): 2026-01-25
-2026-01-26 18:07:45 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[42]-[xxl-job, JobThread-7-1769422065129] 结算成功，耗时: 76ms
-2026-01-26 18:07:45 [com.smartwealth.trade.job.TradeJobHandler#dailySettlementJobHandler]-[55]-[xxl-job, JobThread-7-1769422065129] ========== 结算任务结束 ==========
-2026-01-26 18:07:45 [com.xxl.job.core.thread.JobThread#run]-[180]-[xxl-job, JobThread-7-1769422065129] <br>----------- xxl-job job execute end(finish) -----------<br>----------- Result: handleCode=200, handleMsg = 业务日期[2026-01-25]结算完成
-2026-01-26 18:07:45 [com.xxl.job.core.thread.TriggerCallbackThread#callbackLog]-[197]-[xxl-job, executor TriggerCallbackThread] <br>----------- xxl-job job callback finish.

@@ -1,7 +1,6 @@
 package com.smartwealth.product.service.impl;
 
 import cn.hutool.core.util.StrUtil;
-import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
@@ -39,16 +38,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationAdapter;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
+
+import static org.springframework.transaction.support.TransactionSynchronizationManager.*;
 
 /**
  * <p>
@@ -74,6 +73,7 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
     // 定义空对象常量
     private static final ProductDetailVO NULL_DETAIL_VO = new ProductDetailVO();
 
+
     @Autowired
     private IProductRateHistoryService rateHistoryService;
     @Autowired
@@ -86,6 +86,8 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
     private ProdInfoMapper prodInfoMapper;
     @Autowired
     private ProductRateHistoryMapper historyMapper;
+    @Autowired
+    private ThreadPoolExecutor warmupThreadPool;
 
     // 产品入库初始化
     @Override
@@ -123,7 +125,7 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         rateHistoryService.save(history);
 
         log.info("产品入库完成：{}, ID: {}, 初始净值: {}", product.getName(), product.getId(), initNav);
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronizationAdapter() {
+        registerSynchronization(new TransactionSynchronizationAdapter() {
             @Override
             public void afterCommit() {
                 // 1. 模糊删除所有列表页缓存 (prod:on_sale_list:*)
@@ -166,7 +168,7 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         log.info("管理操作：产品 ID [{}] 已下架", id);
 
         // 4. 事务提交后清理缓存
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 // ==================== 🗑️ 清除 Redis 缓存 ====================
@@ -215,7 +217,8 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         if (rawData != null) {
             try {
                 //TypeReference 解决泛型转换问题
-                cachedPage = JSON_MAPPER.convertValue(rawData, new TypeReference<Page<ProductVO>>() {});
+                cachedPage = JSON_MAPPER.convertValue(rawData, new TypeReference<>() {
+                });
             } catch (Exception e) {
                 log.error("缓存反序列化失败", e);
             }
@@ -227,6 +230,7 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         }
 
         // 4. 处理库存回填
+        assert cachedPage != null;
         List<ProductVO> records = cachedPage.getRecords();
         if (!CollectionUtils.isEmpty(records)) {
             // 提取 ID
@@ -262,20 +266,20 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
      * 封装原本的查库和缓存写入逻辑
      */
     private Page<ProductVO> loadAndCacheProductPage(Integer pageNo, Integer pageSize, String cacheKey) {
-        // 使用分布式锁，锁粒度细化到 "cacheKey" (即 specific page)
+        // 使用分布式锁，
         // 这样查第1页的人不会阻塞查第2页的人
         String lockKey = RedisKeyConstants.PRODLIST_LOCK + cacheKey;
         RLock lock = redissonClient.getLock(lockKey);
 
         try {
-            // 尝试加锁：等待 3秒，持有锁 10秒
             if (lock.tryLock(3, 10, TimeUnit.SECONDS)) {
                 try {
                     // 1. 二次检查 (Double Check)
                     Object rawData = redisService.get(cacheKey, Object.class);
                     if (rawData != null) {
                         try {
-                            return JSON_MAPPER.convertValue(rawData, new TypeReference<Page<ProductVO>>() {});
+                            return JSON_MAPPER.convertValue(rawData, new TypeReference<>() {
+                            });
                         } catch (Exception e) {
                             log.warn("DCL 转换失败，降级查库");
                         }
@@ -335,9 +339,7 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
 
         // 1. 【L1 本地缓存 / L2 分布式缓存】获取静态详情
         // Caffeine 的 loader 内部会调用 getFullProductDetailFromL2
-        ProductDetailVO fullDetail = localProductCache.get(String.valueOf(prodId), id -> {
-            return getFullProductDetailFromL2(Long.valueOf(id));
-        });
+        ProductDetailVO fullDetail = localProductCache.get(String.valueOf(prodId), id -> getFullProductDetailFromL2(Long.valueOf(id)));
 
         // 2. 【防穿透兜底】如果 Redis 里存的是空对象标记
         if (fullDetail == null || fullDetail == NULL_DETAIL_VO) {
@@ -424,7 +426,7 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
                         // 检查是否为空对象标记
                         if (baseInfo.getId() == null) return NULL_DETAIL_VO;
 
-                        // 缓存命中 Base，顺便取 History (大概率也在缓存)
+                        // 缓存命中 Base，顺便取 History
                         List<ProductHistoryVO> historyList = getProductHistoryFromCacheOrDb(prodId);
                         ProductDetailVO vo = new ProductDetailVO();
                         vo.setBaseInfo(baseInfo);
@@ -569,8 +571,6 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         return result;
     }
 
-    //更新产品净值
-
     /**
      * 核心调度入口：更新所有产品净值
      */
@@ -643,57 +643,72 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
     public void warmUpCacheAfterNavUpdate(List<ProdInfo> productList) {
         if (CollectionUtils.isEmpty(productList)) return;
 
-        log.info("========== 开始执行每日缓存预热，涉及产品数: {} ==========", productList.size());
         long start = System.currentTimeMillis();
+        log.info("========== [核弹级预热] 开始，涉及产品数: {} ==========", productList.size());
 
-        // 建议使用 Pipeline 或分批处理，这里为了清晰展示写成循环
-        for (ProdInfo prod : productList) {
-            try {
-                // 1. 刷新 BaseInfo (包含最新的净值和收益率)
-                refreshBaseInfoCache(prod);
+        try {
+            // 1. 【并行采集】：利用线程池并发执行查库和数据封装
+            List<CompletableFuture<Map<String, Object>>> futures = productList.stream()
+                    .map(prod -> CompletableFuture.supplyAsync(
+                            () -> prepareCacheDataForProduct(prod),
+                            warmupThreadPool
+                    ))
+                    .toList();
 
-                // 2. 刷新 History (包含今天刚产生的新数据)
-                refreshHistoryCache(prod.getId());
+            // 2. 【结果汇总】：等待所有任务完成，并将散落的 Map 合并成一个大 Map
+            // join() 会阻塞直到当前任务完成
+            Map<String, Object> allDataMap = futures.stream()
+                    .map(CompletableFuture::join)
+                    .filter(map -> !map.isEmpty())
+                    .flatMap(map -> map.entrySet().stream())
+                    .collect(Collectors.toMap(
+                            Map.Entry::getKey,
+                            Map.Entry::getValue,
+                            (existing, replacement) -> existing // Key 冲突处理
+                    ));
 
-            } catch (Exception e) {
-                // 单个产品预热失败不应影响整体
-                log.error("产品 [{}] 缓存预热失败", prod.getId(), e);
+            // 3. 【批量冲锋】：一次 Pipeline 网络往返，写入所有数据
+            if (!allDataMap.isEmpty()) {
+                // 设置 25 小时过期时间 (可根据需要加入随机抖动)
+                long ttl = TimeUnit.HOURS.toSeconds(25);
+                redisService.setPipelinedEx(allDataMap, ttl, TimeUnit.SECONDS);
             }
+
+            log.info("========== [核弹级预热] 完成，总耗时: {}ms，写入总 Key 数: {} ==========",
+                    System.currentTimeMillis() - start, allDataMap.size());
+
+        } catch (Exception e) {
+            log.error("缓存预热主流程发生异常", e);
         }
+    }
+    /**
+     * 单个产品的数据准备逻辑（子线程执行）
+     */
+    private Map<String, Object> prepareCacheDataForProduct(ProdInfo prod) {
+        Map<String, Object> productData = new HashMap<>();
+        try {
+            // 1. 查库获取历史净值 (IO 密集型)
+            List<ProductHistoryVO> historyVOList = fetchHistoryFromDb(prod.getId());
 
-        log.info("========== 缓存预热完成，耗时: {}ms ==========", System.currentTimeMillis() - start);
+            // 2. 构建基础信息 VO (计算密集型)
+            ProductDetailVO.ProductBaseInfoVO baseInfoVO = buildBaseInfoVO(prod);
+
+            // 3. 组织 Redis Key-Value
+            productData.put(String.format(RedisKeyConstants.PRODUCT_DETAIL, prod.getId()), baseInfoVO);
+            if (!CollectionUtils.isEmpty(historyVOList)) {
+                productData.put(String.format(RedisKeyConstants.PRODUCT_HISTORY, prod.getId()), historyVOList);
+            }
+        } catch (Exception e) {
+            // 单个产品失败不应影响整体，记录错误即可
+            log.error("产品 [{}] 数据预处理失败: {}", prod.getId(), e.getMessage());
+        }
+        return productData;
     }
 
     /**
-     * 1. 刷新 BaseInfo
-     * 策略：强制覆盖。因为 currentNav 变了，不覆盖的话用户看到的还是昨天的净值。
+     * 数据库读取逻辑
      */
-    private void refreshBaseInfoCache(ProdInfo prod) {
-        String key = String.format(RedisKeyConstants.PRODUCT_DETAIL, prod.getId());
-
-        // 构建 VO
-        ProductDetailVO.ProductBaseInfoVO baseInfoVO = new ProductDetailVO.ProductBaseInfoVO();
-
-        // 复制静态属性 (id, name, code, cycle, riskLevel, status,baseRate, etc.)
-        BeanUtils.copyProperties(prod, baseInfoVO);
-
-        // 显式赋值动态属性 (确保是用最新的)
-        baseInfoVO.setCurrentNav(prod.getCurrentNav());
-        baseInfoVO.setLatestRate(prod.getLatestRate());
-
-        // 写入 Redis，TTL 25小时 (覆盖一天周期，防止击穿)
-        redisService.set(key, baseInfoVO, 25, TimeUnit.HOURS);
-    }
-
-    /**
-     * 2. 刷新 History
-     * 策略：查库取最新 90 条 -> 排序 -> 写入。
-     */
-    private void refreshHistoryCache(Long prodId) {
-        String key = String.format(RedisKeyConstants.PRODUCT_HISTORY, prodId);
-
-        // A. 查库：按时间倒序取最新的 90 条
-        // 对应 SQL: select * from t_prod_rate_history where prod_id = ? order by record_date desc limit 90
+    private List<ProductHistoryVO> fetchHistoryFromDb(Long prodId) {
         List<ProductRateHistory> dbHistory = rateHistoryService.list(
                 new LambdaQueryWrapper<ProductRateHistory>()
                         .eq(ProductRateHistory::getProdId, prodId)
@@ -701,25 +716,29 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
                         .last("LIMIT 90")
         );
 
-        if (CollectionUtils.isEmpty(dbHistory)) return;
+        if (CollectionUtils.isEmpty(dbHistory)) return Collections.emptyList();
 
-        // B. 内存处理：反转顺序 (变成 日期从小到大，方便前端画图) + 转 VO
-        // 你的旧代码里用了 Collections.reverse，保持一致
         Collections.reverse(dbHistory);
-
-        List<ProductHistoryVO> voList = dbHistory.stream().map(h -> {
+        return dbHistory.stream().map(h -> {
             ProductHistoryVO vo = new ProductHistoryVO();
             vo.setDate(h.getRecordDate());
             vo.setNav(h.getNav());
             vo.setRate(h.getRate());
             return vo;
         }).collect(Collectors.toList());
-
-        // C. 写入 Redis
-        // 注意：读取时是用 ProductHistoryVO[].class，所以存 List 没问题，Jackson 会自动处理
-        redisService.set(key, voList, 25, TimeUnit.HOURS);
     }
 
+    /**
+     * VO 转换逻辑
+     */
+    private ProductDetailVO.ProductBaseInfoVO buildBaseInfoVO(ProdInfo prod) {
+        ProductDetailVO.ProductBaseInfoVO baseInfoVO = new ProductDetailVO.ProductBaseInfoVO();
+        BeanUtils.copyProperties(prod, baseInfoVO);
+        // 覆盖最新净值数据
+        baseInfoVO.setCurrentNav(prod.getCurrentNav());
+        baseInfoVO.setLatestRate(prod.getLatestRate());
+        return baseInfoVO;
+    }
 }
 
 

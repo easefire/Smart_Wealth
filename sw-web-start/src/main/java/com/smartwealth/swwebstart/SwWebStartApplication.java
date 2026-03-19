@@ -8,7 +8,6 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 
 @MapperScan("com.smartwealth.*.mapper")
 @ComponentScan(basePackages = "com.smartwealth")
-@EnableFeignClients(basePackages = "com.smartwealth.agent.client")
 @SpringBootApplication
 public class SwWebStartApplication {
 

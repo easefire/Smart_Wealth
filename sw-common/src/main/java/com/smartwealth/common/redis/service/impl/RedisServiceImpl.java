@@ -1,5 +1,6 @@
 package com.smartwealth.common.redis.service.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartwealth.common.redis.constant.RedisKeyConstants;
 import com.smartwealth.common.redis.service.RedisService;
@@ -7,12 +8,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.*;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -197,4 +200,44 @@ public class RedisServiceImpl implements RedisService {
         });
     }
 
+    /**
+     * 【极其核心】使用 Pipeline 管道批量写入 Redis 并设置相同的过期时间
+     * 物理意义：将 N 次网络 RTT (往返耗时) 压缩为 1 次，极大提升吞吐量。
+     *
+     * @param dataMap 键值对集合 (Key -> Value)
+     * @param timeout 过期时间数值
+     * @param unit    时间单位
+     */
+    public void setPipelinedEx(Map<String, Object> dataMap, long timeout, TimeUnit unit) {
+        if (CollectionUtils.isEmpty(dataMap)) {
+            return;
+        }
+
+        // 1. 基础 TTL（例如你传入的 25 小时）
+        long baseTtlSeconds = unit.toSeconds(timeout);
+
+        RedisSerializer<String> keySerializer = (RedisSerializer<String>) redisTemplate.getKeySerializer();
+        RedisSerializer<Object> valueSerializer = (RedisSerializer<Object>) redisTemplate.getValueSerializer();
+
+        redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (Map.Entry<String, Object> entry : dataMap.entrySet()) {
+                if (entry.getValue() == null) continue;
+
+                byte[] rawKey = keySerializer.serialize(entry.getKey());
+                byte[] rawVal = valueSerializer.serialize(entry.getValue());
+
+                if (rawKey != null && rawVal != null) {
+                    // 2. 【核心改动】：为每个 Key 独立计算随机抖动（0 到 60 分钟之间）
+                    // 3600 秒 = 60 分钟
+                    long jitter = ThreadLocalRandom.current().nextLong(3600);
+                    long finalTtl = baseTtlSeconds + jitter;
+
+                    // 3. 每一个 Key 的过期时间都不一样，彻底打散缓存失效时间
+                    connection.setEx(rawKey, finalTtl, rawVal);
+                }
+            }
+            return null;
+        });
+    }
 }
+

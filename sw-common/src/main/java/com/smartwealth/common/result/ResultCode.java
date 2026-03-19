@@ -95,12 +95,7 @@ public enum ResultCode {
     MARKET_SCRIPT_EXECUTE_FAIL(5003, "市场剧本触发失败"),
 
     // 强制关单
-    FORCE_CLOSE_FAIL(5004, "强制关单失败"),
-
-    // --- 🤖 AI 模块 (6000+) ---
-    //
-    AI_SERVICE_BUSY(6001, "AI助手正在思考中，请稍后再试"),
-    AI_QUOTA_EXCEEDED(6002, "今日AI对话次数已达上限");
+    FORCE_CLOSE_FAIL(5004, "强制关单失败");
 
     private final Integer code;
     private final String message;

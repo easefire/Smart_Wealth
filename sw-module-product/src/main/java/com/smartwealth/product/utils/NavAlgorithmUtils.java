@@ -60,14 +60,17 @@ public class NavAlgorithmUtils {
         // 4. 计算最终涨跌幅
         double finalChange = rawChange * riskAmplifier;
 
-        // 5. 特殊处理 R1 (R1通常是保本理财，不允许大跌，做个保护)
+        // 1. 如果是 R1 固收类产品，直接脱离大盘逻辑，走独立的低波动正收益模型
         if (riskLevel != null && riskLevel == 1) {
-            // R1 产品波动极小，且大概率非负
-            finalChange = Math.abs(finalChange * 0.1);
+            // R1 的年化收益大概在 2%~3%，折合日均收益约万分之一 (0.0001)
+            // 波动极小，用绝对的正态分布即可，确保不亏损
+            double r1Yield = 0.0001 + (random.nextGaussian() * 0.00001);
+            return BigDecimal.valueOf(Math.max(0, r1Yield)).setScale(8, RoundingMode.HALF_UP);
         }
 
-        // 6. 兜底限制 (防止一天跌没了，设定涨跌停板 10% 或 20%)
-        finalChange = Math.max(-0.10, Math.min(0.10, finalChange));
+        double limit = 0.10 * riskAmplifier;
+        finalChange = Math.max(-limit, Math.min(limit, finalChange));
+
 
         return BigDecimal.valueOf(finalChange).setScale(8, RoundingMode.HALF_UP);
     }
