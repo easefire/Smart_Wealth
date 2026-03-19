@@ -42,8 +42,7 @@ import java.util.stream.Collectors;
 public class InternalProductService {
 
     @Autowired
-    @Lazy
-    private InternalProductService selfProxy;
+    private TransactionHelper selfProxy;
     @Autowired
     private IProdInfoService productService;
     @Autowired
@@ -75,22 +74,6 @@ public class InternalProductService {
         // 1.2 处理库存不足
         if (result == -2 || result < 0) {
             throw new BusinessException("产品库存不足");
-        }
-    }
-    @Transactional(rollbackFor = Exception.class)
-    //数据库库存操作
-    public void doStockInDb(Long id, BigDecimal quantity,String action) {
-        if(action.equals("LOCK")){
-            int rows = prodInfoMapper.lockStock(id, quantity);
-            if (rows == 0) {
-                throw new BusinessException("产品已被抢购空，请重试");
-            }
-        }else if(action.equals("UNLOCK")){
-            int rows=prodInfoMapper.unlockStock(id, quantity);
-            if (rows==0) {
-                throw new BusinessException("份额回滚失败");
-            }
-
         }
     }
     // Redis解锁库存
