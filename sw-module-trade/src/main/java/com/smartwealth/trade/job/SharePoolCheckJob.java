@@ -87,9 +87,6 @@ public class SharePoolCheckJob {
         log.info("========== 对账结束 ==========");
     }
 
-    /**
-     * 解析工具：从 "申购扣款... 份额：9088.57" 中提取 9088.57
-     */
     private BigDecimal parseShares(String remark) {
         if (remark == null) return null;
         Matcher matcher = SHARE_PATTERN.matcher(remark);

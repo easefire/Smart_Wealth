@@ -644,7 +644,6 @@ public class ProdInfoServiceImpl extends ServiceImpl<ProdInfoMapper, ProdInfo> i
         if (CollectionUtils.isEmpty(productList)) return;
 
         long start = System.currentTimeMillis();
-        log.info("========== [核弹级预热] 开始，涉及产品数: {} ==========", productList.size());
 
         try {
             // 1. 【并行采集】：利用线程池并发执行查库和数据封装

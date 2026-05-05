@@ -3,16 +3,16 @@ server:
 
 spring:
   application:
-    name: smart-wealth
+    name: smart-wealth_db
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/smart_wealth_db?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/smart_wealth_db?useUnicode=true&characterEncoding=UTF-8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: 923827
     hikari:
-      maximum-pool-size: 25    # 最大连接数，建议调大以应对高并发
-      minimum-idle: 10          # 最小空闲连接数
-      connection-timeout: 30000 # 获取连接超时时间（毫秒）
+      maximum-pool-size: 25
+      minimum-idle: 10
+      connection-timeout: 30000
   data:
     redis:
       host: localhost
@@ -21,19 +21,16 @@ spring:
       database: 0
       lettuce:
         pool:
-          max-active: 200      # 放开限制，匹配你的 200 并发压测
-          max-idle: 50         # 最大空闲连接
-          min-idle: 10         # 最小空闲连接
-          max-wait: 5000ms     # 最大阻塞等待时间，超过5秒拿不到连接则报错，不至于卡死十几秒
-  spring:
+          max-active: 200
+          max-idle: 50
+          min-idle: 10
+          max-wait: 5000ms
     rabbitmq:
       host: 127.0.0.1
       port: 5672
       username: guest
       password: guest
 
-      # ================= 护甲 1：发送端防线 (Producer) =================
-      # 作用：确保消息发出去并且落盘，配合本地消息表修改 status = 1
       publisher-confirm-type: correlated
       publisher-returns: true
 

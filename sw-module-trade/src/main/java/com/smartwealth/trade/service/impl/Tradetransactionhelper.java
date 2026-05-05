@@ -8,6 +8,7 @@ import com.smartwealth.common.result.Result;
 import com.smartwealth.common.result.ResultCode;
 import com.smartwealth.product.entity.ProdInfo;
 import com.smartwealth.product.service.impl.InternalProductService;
+import com.smartwealth.product.service.impl.TransactionHelper;
 import com.smartwealth.product.vo.ProductDetailVO;
 import com.smartwealth.trade.dto.PurchaseDTO;
 import com.smartwealth.trade.dto.RedemptionDTO;
@@ -20,7 +21,6 @@ import com.smartwealth.trade.event.ProdRedeemEvent;
 import com.smartwealth.trade.mapper.RedeemRecordMapper;
 import com.smartwealth.trade.mapper.TradeLocalMsgMapper;
 import com.smartwealth.trade.service.ITradeOrderService;
-import org.checkerframework.checker.units.qual.A;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -45,7 +45,7 @@ public class Tradetransactionhelper {
     @Autowired
     InternalAssetService assetService;
     @Autowired
-    InternalProductService productService;
+    TransactionHelper transactionHelper;
     @Autowired
     private ApplicationEventPublisher eventPublisher;
     @Transactional(rollbackFor = Exception.class)
@@ -83,7 +83,7 @@ public class Tradetransactionhelper {
         msg.setContent(JSON.toJSONString(payload));
         tradeLocalMsgMapper.insert(msg);
 
-        productService.doStockInDb(prod.getBaseInfo().getId(),quantity,"LOCK");
+        transactionHelper.doStockInDb(prod.getBaseInfo().getId(),quantity,"LOCK");
 
         eventPublisher.publishEvent(new ProdPurchaseEvent(this, msg));
 

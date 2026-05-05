@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import java.util.concurrent.*;
 
 @Configuration
-public class SettlementThreadPoolConfig {
+public class ThreadPoolConfig {
 
     @Bean("settlementThreadPool")
     public ThreadPoolExecutor settlementThreadPool() {
@@ -19,7 +19,7 @@ public class SettlementThreadPoolConfig {
                 60L,                        // 空闲存活时间
                 TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(5000), // 有界队列防止内存溢出
-                new ThreadPoolExecutor.CallerRunsPolicy() // 拒绝策略：由主线程代为执行
+                new ThreadPoolExecutor.CallerRunsPolicy()
         );
     }
 
@@ -27,12 +27,12 @@ public class SettlementThreadPoolConfig {
     public ThreadPoolExecutor warmupThreadPool() {
         int core = Runtime.getRuntime().availableProcessors();
         return new ThreadPoolExecutor(
-                core + 1,                   // 核心线程数
+                core + 1,
                 core * 2,
                 60L,
                 TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(1000), // 必须指定队列容量，防止 OOM
-                new ThreadPoolExecutor.CallerRunsPolicy() // 拒绝策略：如果队列满了，让外层的 @Async 主线程自己去执行，天然起到限流作用
+                new LinkedBlockingQueue<>(1000),
+                new ThreadPoolExecutor.CallerRunsPolicy()
         );
     }
 }

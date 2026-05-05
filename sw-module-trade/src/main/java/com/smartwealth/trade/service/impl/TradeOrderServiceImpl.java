@@ -44,7 +44,9 @@ import com.smartwealth.user.event.AccountCancelEvent;
 import com.smartwealth.user.service.impl.InternalUserService;
 import lombok.extern.slf4j.Slf4j;
 
+import org.hibernate.validator.internal.util.stereotypes.Lazy;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
@@ -57,6 +59,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.Function;
@@ -77,19 +80,15 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
     @Autowired
     private InternalProductService productService; // 模拟获取产品信息的内部接口
     @Autowired
-    private InternalAssetService assetService; // 跨模块调用资产扣款
-    @Autowired
     private InternalUserService userService; // 模拟获取用户信息的内部接口
     @Autowired
     private TradeOrderMapper tradeOrderMapper;
     @Autowired
     DailyProfitMapper dailyProfitMapper;
     @Autowired
-    private TradeLocalMsgMapper tradeLocalMsgMapper;
-    @Autowired
     private RedeemRecordMapper redeemRecordMapper;
     @Autowired
-    private Tradetransactionhelper tradetransactionhelper;
+    private ObjectProvider<Tradetransactionhelper> transactionHelperProvider;
     @Autowired
     private SettlementTxHelper txHelper;
     @Autowired
@@ -129,7 +128,7 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
         try {
             // 进入我们在步骤 2 写的纯粹 DB 逻辑。
             // 此时才会向连接池申请 1 个 MySQL 连接，并在几毫秒内用完即释放。
-            return tradetransactionhelper.createOrderAndMessage(userId, dto, prod, quantity);
+            return transactionHelperProvider.getIfAvailable().createOrderAndMessage(userId, dto, prod, quantity);
 
         } catch (Exception e) {
             log.error("落库事务执行失败，触发 Redis 库存补偿回滚", e);
@@ -198,7 +197,7 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
             // 2. 提前生成全局唯一的请求流水号（剥离 CPU 计算）
             Long requestId = IdWorker.getId();
             log.info("开始处理赎回请求, userId:{}, productId:{}, requestId:{}", userId, dto.getProductId(), requestId);
-            return tradetransactionhelper.executeRedeemWithPessimisticLock(userId, dto, prod, requestId);
+            return transactionHelperProvider.getIfAvailable().executeRedeemWithPessimisticLock(userId, dto, prod, requestId);
     }
 
     // 分页查询订单历史
@@ -440,69 +439,53 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
     @Override
     public void executeDailySettlementWithSharding(LocalDate bizDate, int shardIndex, int shardTotal) {
         log.info("========== 分片[{}/{}] {} 开始结算 ==========", shardIndex, shardTotal, bizDate);
-
-        // 1. 预计算每个产品的单位收益
         Map<Long, BigDecimal> unitProfitMap = preCalculateRates(bizDate);
         if (unitProfitMap.isEmpty()) {
             log.info("今日产品净值无波动或无记录，提前结束。");
             return;
         }
-
         int fetchSize = 5000;
         long lastId = 0L;
-
-        // 2. 游标分页拉取
         while (true) {
             List<TradeOrder> orders = tradeOrderMapper.selectUnsettledOrders(lastId, fetchSize, shardIndex, shardTotal, bizDate);
             if (CollectionUtils.isEmpty(orders)) {
                 log.info("分片[{}] 无待结算订单，退出主循环。", shardIndex);
                 break;
             }
-
             lastId = orders.get(orders.size() - 1).getId();
-
-            // 3. 将 5000 条切割成 5 份，每份 1000 条
             List<List<TradeOrder>> partitions = partitionList(orders, 1000);
-            CountDownLatch latch = new CountDownLatch(partitions.size());
-
-            // 4. 多线程并发计算与落库
-            for (List<TradeOrder> batchOrders : partitions) {
-                settlementThreadPool.execute(() -> {
-                    try {
-                        processAndSaveBatch(batchOrders, unitProfitMap, bizDate);
-                    } catch (Exception e) {
-                        log.error("批次处理异常，跳过该批次继续执行", e);
-                    } finally {
-                        latch.countDown();
-                    }
-                });
-            }
-
-            // 5. 等待这一大批全部处理完
+            List<CompletableFuture<Void>> futures = partitions.stream()
+                    .map(batchOrders -> CompletableFuture.runAsync(
+                            () -> processAndSaveBatch(batchOrders, unitProfitMap, bizDate),
+                            settlementThreadPool
+                    ).exceptionally(ex -> {
+                        Long startId = batchOrders.get(0).getId();
+                        Long endId = batchOrders.get(batchOrders.size() - 1).getId();
+                        log.error("【结算核损】批次入库异常！订单区间: [{} - {}]。请排查 DB 状态或入异常表补偿。",
+                                startId, endId, ex);
+                        return null;
+                    }))
+                    .toList();
             try {
-                latch.await();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("主线程等待超时被中断");
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            } catch (Exception e) {
+                log.error("分片[{}] 主线程屏障等待发生未知崩溃", shardIndex, e);
+                throw new RuntimeException("结算主流程被意外打断", e);
             }
         }
         log.info("========== 分片[{}] 每日结算完成 ==========", shardIndex);
     }
-
     private void processAndSaveBatch(List<TradeOrder> batchOrders, Map<Long, BigDecimal> unitProfitMap, LocalDate bizDate) {
         List<DailyProfit> profitInsertList = new ArrayList<>();
         List<TradeOrder> orderUpdateList = new ArrayList<>();
-
         for (TradeOrder order : batchOrders) {
             BigDecimal unitProfit = unitProfitMap.get(order.getProdId());
             if (unitProfit == null || unitProfit.compareTo(BigDecimal.ZERO) == 0) continue;
 
             BigDecimal dailyProfitAmt = order.getQuantity().multiply(unitProfit).setScale(4, RoundingMode.HALF_UP);
             if (dailyProfitAmt.compareTo(BigDecimal.ZERO) == 0) continue;
-
-            // 组装流水
             DailyProfit profitLog = new DailyProfit();
-            profitLog.setId(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId());
+            profitLog.setId(IdWorker.getId());
             profitLog.setOrderId(order.getId());
             profitLog.setUserId(order.getUserId());
             profitLog.setProdId(order.getProdId());
@@ -510,20 +493,15 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
             profitLog.setProfitDate(bizDate);
             profitLog.setType(1);
             profitInsertList.add(profitLog);
-
-            // 组装订单累计收益更新参数
             TradeOrder updateVo = new TradeOrder();
             updateVo.setId(order.getId());
             updateVo.setAccumulatedIncome(dailyProfitAmt);
             orderUpdateList.add(updateVo);
         }
-
-        // 调用微事务入库
         if (!profitInsertList.isEmpty() || !orderUpdateList.isEmpty()) {
             txHelper.doBatchSave(profitInsertList, orderUpdateList);
         }
     }
-
     private Map<Long, BigDecimal> preCalculateRates(LocalDate bizDate) {
         List<ProductRateHistory> historyList = productService.selectList(
                 new LambdaQueryWrapper<ProductRateHistory>().eq(ProductRateHistory::getRecordDate, bizDate)
@@ -543,7 +521,6 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
         }
         return map;
     }
-
     private <T> List<List<T>> partitionList(List<T> list, int size) {
         List<List<T>> parts = new ArrayList<>();
         for (int i = 0; i < list.size(); i += size) {
@@ -551,7 +528,6 @@ public class TradeOrderServiceImpl extends ServiceImpl<TradeOrderMapper, TradeOr
         }
         return parts;
     }
-
     @Override
     public List<TradeCheckDTO> checkIncomeConsistency() {
         return tradeOrderMapper.checkIncomeConsistency();

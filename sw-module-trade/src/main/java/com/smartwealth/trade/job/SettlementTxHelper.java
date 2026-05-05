@@ -21,19 +21,11 @@ public class SettlementTxHelper {
     @Autowired
     private DailyProfitMapper dailyProfitMapper;
 
-    /**
-     * 这里才加 @Transactional
-     * 作用：仅在执行批量 SQL 的这几十毫秒内开启事务，极大地缩短了锁竞争时间。
-     * 哪怕这一千条失败了回滚，也不会影响其他批次。
-     */
     @Transactional(rollbackFor = Exception.class)
     public void doBatchSave(List<DailyProfit> profitInsertList, List<TradeOrder> orderUpdateList) {
         if (!CollectionUtils.isEmpty(profitInsertList)) {
-            // 注意：底层的 mapper 需要实现 ON DUPLICATE KEY UPDATE 或者 INSERT IGNORE
-            // 防止同一天的同一笔订单重复插入流水
             dailyProfitMapper.insertBatch(profitInsertList);
         }
-
         if (!CollectionUtils.isEmpty(orderUpdateList)) {
             tradeOrderMapper.batchAddIncome(orderUpdateList);
         }
