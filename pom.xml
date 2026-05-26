@@ -11,6 +11,9 @@
 
     <modules>
         <module>sw-common</module>
+        <!-- 【REFACTOR-Step2-2】sw-api 必须在 sw-common 之后、sw-module-* 之前编译，
+             因为它只 depend on sw-common，反过来又被所有 sw-module-* 依赖。 -->
+        <module>sw-api</module>
         <module>sw-module-user</module>
         <module>sw-module-product</module>
         <module>sw-module-asset</module>
@@ -29,7 +32,9 @@
         <mysql.version>8.2.0</mysql.version>
         <hutool.version>5.8.25</hutool.version>
         <knife4j.version>4.5.0</knife4j.version>
-        <lombok.version>1.18.30</lombok.version>
+        <!-- 【REFACTOR】lombok 1.18.30 在 JDK 21+ 上 ExceptionInInitializerError，
+             升到 1.18.38（最新 GA），覆盖 JDK 17~JDK 25。 -->
+        <lombok.version>1.18.38</lombok.version>
     </properties>
 
     <dependencyManagement>
@@ -52,6 +57,12 @@
             <dependency>
                 <groupId>com.smartwealth</groupId>
                 <artifactId>sw-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- 【REFACTOR-Step2-2】跨模块 SPI 契约层 -->
+            <dependency>
+                <groupId>com.smartwealth</groupId>
+                <artifactId>sw-api</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -122,18 +133,35 @@
     </dependencies>
 
     <build>
+        <!--
+            【REFACTOR】之前 root pom 只在 pluginManagement 里写了 maven-compiler-plugin，
+            未声明 annotationProcessorPaths。结果：
+              - IDE（带 lombok 插件）能正常编译；
+              - 但 mvn CLI 一跑就因 @Data/@Slf4j 不展开报"找不到 getXxx / log"。
+            这里把 lombok 注解处理器作为"全工程默认"挂上，CLI 也能直接编译，
+            CI 流水线不再依赖 IDE 内置插件。
+        -->
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
         <pluginManagement>
             <plugins>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.13.0</version>
-                    <configuration>
-                        <source>${maven.compiler.source}</source>
-                        <target>${maven.compiler.target}</target>
-                        <encoding>${project.build.sourceEncoding}</encoding>
-                    </configuration>
-                </plugin>
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>

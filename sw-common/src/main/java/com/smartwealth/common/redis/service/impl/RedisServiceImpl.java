@@ -158,11 +158,39 @@ public class RedisServiceImpl implements RedisService {
     public BigDecimal getRedisStock(Long id) {
         String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
         String val = stringRedisTemplate.opsForValue().get(stockKey);
+        return parseStock(stockKey, val);
+    }
+
+    /**
+     * 【NEW for #7】统一从 stringRedisTemplate 批量取库存并反 scale，
+     * 调用方再也不用关心“值是 Long 还是 String、要不要 movePointLeft(6)”。
+     */
+    @Override
+    public List<BigDecimal> multiGetStocks(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> stockKeys = ids.stream()
+                .map(id -> String.format(RedisKeyConstants.PRODUCT_STOCK, id))
+                .toList();
+        List<String> raw = stringRedisTemplate.opsForValue().multiGet(stockKeys);
+        List<BigDecimal> result = new ArrayList<>(ids.size());
+        if (raw == null) {
+            for (int i = 0; i < ids.size(); i++) result.add(null);
+            return result;
+        }
+        for (int i = 0; i < raw.size(); i++) {
+            result.add(parseStock(stockKeys.get(i), raw.get(i)));
+        }
+        return result;
+    }
+
+    private BigDecimal parseStock(String stockKey, String val) {
         if (val == null) {
             return null;
         }
         try {
-            return new BigDecimal(val).divide(new BigDecimal("1000000"), 6, RoundingMode.HALF_UP);
+            return new BigDecimal(val).divide(STOCK_SCALE, 6, RoundingMode.HALF_UP);
         } catch (Exception e) {
             log.error("库存数据异常: key={}, val={}", stockKey, val);
             return null;

@@ -69,6 +69,13 @@ public enum ResultCode {
     RISK_LEVEL_MISMATCH(3003, "您的风险承受能力不足以购买此高风险产品"),
 
     // 赎回逻辑
+    /**
+     * 支付密码"错误"（用户输入与库内不匹配）。
+     * <p>
+     * ⚠️ 命名/分段注意：本码登记在交易模块 3xxx，但实际语义属于资金模块。
+     * 历史原因不再迁移码值（前端已依赖），新代码遇到"未设置支付密码"请用 {@link #PAY_PASSWORD_NOT_SET}，
+     * 仅"错误密码"才用本码。
+     */
     PAYMENT_PASSWORD_ERROR(3007, "支付密码错误"),
     HOLDING_NOT_ENOUGH(3004, "可用持仓份额不足"),
     ORDER_STATUS_ERROR(3005, "订单状态异常，无法执行此操作"),
@@ -77,6 +84,10 @@ public enum ResultCode {
     // --- 💰 资金模块 (4000+) ---
     // 充值提现
     WALLET_NOT_EXIST(4001, "用户钱包不存在"),
+    /**
+     * 用户尚未设置支付密码。任何动账前置（赎回/提现/支付）均应优先返回此码而非 PAYMENT_PASSWORD_ERROR，
+     * 避免引导用户去重试一个根本不存在的密码。
+     */
     PAY_PASSWORD_NOT_SET(4002, "请先设置支付密码"),
     BALANCE_NOT_ENOUGH(4003, "钱包余额不足"),
     BANK_CARD_NOT_BIND(4004, "请先绑定银行卡"), //

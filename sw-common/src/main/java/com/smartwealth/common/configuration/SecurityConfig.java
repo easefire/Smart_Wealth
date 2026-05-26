@@ -1,5 +1,6 @@
 package com.smartwealth.common.configuration;
 
+import com.smartwealth.common.filter.InternalServiceFilter;
 import com.smartwealth.common.filter.JwtAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +23,13 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    /**
+     * 【BUGFIX-#10】内部接口角色赋予过滤器：
+     * 仅当请求来自白名单 IP 且路径前缀为 /sw/system 时注入 ROLE_INTERNAL_SERVICE。
+     */
+    @Autowired
+    private InternalServiceFilter internalServiceFilter;
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -51,7 +59,11 @@ public class SecurityConfig {
                             response.sendError(HttpServletResponse.SC_FORBIDDEN, "Forbidden");
                         })
                 )
-                // 4. 关键：确保内部校验在最前面
+                // 4. 关键：
+                //    ① InternalServiceFilter 必须排在 JwtAuthenticationFilter 之前 ——
+                //       内部服务调用通常不会带 JWT，靠 IP 白名单赋角色即可放行；
+                //    ② JwtAuthenticationFilter 处理普通用户/管理员的 JWT 鉴权。
+                .addFilterBefore(internalServiceFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
 

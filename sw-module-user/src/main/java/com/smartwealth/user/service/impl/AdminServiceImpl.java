@@ -88,10 +88,13 @@ public class AdminServiceImpl extends ServiceImpl<AdminUserMapper, AdminUser> im
         }
 
         // 2. 构造更新条件
+        // 【BUGFIX】之前误把 createTime 当成了 updateTime，每次管理员冻结/解冻
+        //          都会覆盖用户的“注册时间”，导致用户分析、审计、风控数据失真。
+        //          UserBase 实体没有 updateTime 字段，所以这里仅更新 status；
+        //          MyMetaObjectHandler 的自动填充也无可填充字段，符合预期。
         LambdaUpdateWrapper<UserBase> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(UserBase::getId, userId)
-                .set(UserBase::getStatus, status) // 设置新状态：0-冻结，1-正常
-                .set(UserBase::getCreateTime, LocalDateTime.now());
+                .set(UserBase::getStatus, status);
 
         // 3. 执行更新
         int success = baseMapper.update(updateWrapper);

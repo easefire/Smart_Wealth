@@ -42,7 +42,26 @@ import com.baomidou.mybatisplus.extension.conditions.update.LambdaUpdateChainWra
 @Slf4j
 public class UserBaseServiceImpl extends ServiceImpl<UserBaseMapper, UserBase> implements IUserBaseService {
 
-    private static final byte[] AES_KEY = "SW_Secure_Key_16".getBytes(StandardCharsets.UTF_8);
+    /**
+     * 【SECURITY】AES 密钥不再硬编码，统一从 smartwealth.security.aes-key 注入。
+     * 生产环境必须通过环境变量 SMARTWEALTH_AES_KEY 覆盖，且为 16/24/32 字节。
+     */
+    @org.springframework.beans.factory.annotation.Value("${smartwealth.security.aes-key}")
+    private String aesKeyStr;
+
+    private byte[] aesKey;
+
+    @jakarta.annotation.PostConstruct
+    public void initAesKey() {
+        if (aesKeyStr == null || aesKeyStr.startsWith("CHANGE_ME")) {
+            log.warn("⚠️ AES 密钥使用了默认值，生产环境必须通过 SMARTWEALTH_AES_KEY 覆盖！");
+        }
+        this.aesKey = aesKeyStr.getBytes(StandardCharsets.UTF_8);
+        int len = this.aesKey.length;
+        if (len != 16 && len != 24 && len != 32) {
+            throw new IllegalStateException("smartwealth.security.aes-key 长度必须为 16/24/32 字节，实际：" + len);
+        }
+    }
 
     @Autowired
     private UserBaseMapper baseMapper;
@@ -95,8 +114,14 @@ public class UserBaseServiceImpl extends ServiceImpl<UserBaseMapper, UserBase> i
         int riskLevel = calculateLevel(totalScore);
 
         // 3. 更新用户风险等级和状态
+        // 【BUGFIX-#18】状态机：REGISTERED → VERIFIED → TESTED → ACTIVE。
+        //              老代码风险测评完直接跳到 ACTIVE，跳过了 TESTED。
+        //              结果：① bindBankCard 的 status == VERIFIED 校验形同虚设；
+        //                    ② removeBankCard 把状态退回 TESTED，与此处的 ACTIVE 自相矛盾，
+        //                       导致用户实际处于"已测评、无银行卡"也算 ACTIVE，可以下单后才发现没卡。
+        //              正确做法：风险测评后置 TESTED，等绑卡完成才推进到 ACTIVE。
         user.setRiskLevel((byte) riskLevel);
-        user.setStatus(UserStatusEnum.ACTIVE); // 状态流转：已实名 -> 已激活
+        user.setStatus(UserStatusEnum.TESTED);
         baseMapper.updateById(user);
 
         return riskLevel;
@@ -134,7 +159,7 @@ public class UserBaseServiceImpl extends ServiceImpl<UserBaseMapper, UserBase> i
         }
 
         // 3. Hutool 加密
-        AES aes = SecureUtil.aes(AES_KEY);
+        AES aes = SecureUtil.aes(aesKey);
         String encryptedCardNo = aes.encryptBase64(dto.getCardNo());
         // 4. 唯一性检查：同一用户不可绑定相同卡号
         boolean exists = new LambdaQueryChainWrapper<>(bankCardMapper)
@@ -225,7 +250,7 @@ public class UserBaseServiceImpl extends ServiceImpl<UserBaseMapper, UserBase> i
                 .list(); //
 
         // 2. 初始化 Hutool AES
-        AES aes = SecureUtil.aes(AES_KEY);
+        AES aes = SecureUtil.aes(aesKey);
 
         return list.stream().map(card -> {
             BankCardVO vo = new BankCardVO();

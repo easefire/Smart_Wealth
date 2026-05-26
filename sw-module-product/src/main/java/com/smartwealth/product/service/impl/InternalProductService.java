@@ -2,6 +2,7 @@ package com.smartwealth.product.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
+import com.smartwealth.api.InternalProductApi;
 import com.smartwealth.common.exception.BusinessException;
 import com.smartwealth.common.redis.constant.RedisKeyConstants;
 import com.smartwealth.common.redis.service.RedisService;
@@ -39,7 +40,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-public class InternalProductService {
+public class InternalProductService implements InternalProductApi {
 
     @Autowired
     private TransactionHelper selfProxy;
@@ -55,6 +56,7 @@ public class InternalProductService {
     private ProductRateHistoryMapper productRateHistoryMapper;
 
     // Redis锁定库存
+    @Override
     public void lockStock(Long id, BigDecimal quantity) {
         String stockKey = String.format(RedisKeyConstants.PRODUCT_STOCK, id);
         Long result = redisService.executeStock(stockKey, quantity);
@@ -77,6 +79,7 @@ public class InternalProductService {
         }
     }
     // Redis解锁库存
+    @Override
     public void unlockStock(Long id, BigDecimal quantity) {
         // 1. 独立短事务：执行数据库回补
         try {
@@ -112,6 +115,7 @@ public class InternalProductService {
         return productService.getById(productId);
     }
     // 根据一组产品ID获取产品名称映射
+    @Override
     public Map<Long, String> getProdNamesByIds(Set<Long> prodIds) {
         if (CollectionUtils.isEmpty(prodIds)) {
             return Collections.emptyMap();
@@ -126,6 +130,7 @@ public class InternalProductService {
         ));
     }
     // 根据一组产品ID获取产品当前净值映射
+    @Override
     public Map<Long, BigDecimal> getProdNavMap(Set<Long> prodIds) {
         if (CollectionUtils.isEmpty(prodIds)) {
             return Collections.emptyMap();

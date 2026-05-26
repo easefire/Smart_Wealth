@@ -4,11 +4,18 @@ import com.smartwealth.product.enums.MarketSentiment;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
+/**
+ * 【BUGFIX-P2-#31】之前用 {@code private static final Random random = new Random()}：
+ *   - {@link java.util.Random} 内部用 CAS 自旋一个 AtomicLong 作为种子，多线程同时调
+ *     {@code nextGaussian()} 会因为 cmpxchg 失败重试导致 CPU 飙升、且统计分布略偏；
+ *   - {@code nextGaussian()} 在 JDK 17 之前还会持有 monitor 锁，多线程更慢；
+ *   - 净值 Job 是按产品并行处理的（warmupThreadPool），完美踩中这个性能问题。
+ *
+ * 改用 {@link ThreadLocalRandom}：每个线程一份种子、零竞争、相同分布，<strong>不需要 random 实例字段</strong>。
+ */
 public class NavAlgorithmUtils {
-
-    private static final Random random = new Random();
 
     /**
      * 计算今日净值涨跌幅
@@ -45,11 +52,11 @@ public class NavAlgorithmUtils {
                 break;
         }
 
-        // 2. 引入“个股特异性” (高斯分布/正态分布)
-        // random.nextGaussian() 返回均值0，标准差1的随机数
-        // 这一步实现了“大涨的时候不可能所有都涨”：
+        // 2. 引入"个股特异性" (高斯分布/正态分布)
+        // ThreadLocalRandom.nextGaussian() 返回均值0，标准差1的随机数
+        // 这一步实现了"大涨的时候不可能所有都涨"：
         // 即使 marketMean 是 +0.025，如果随机出 -2.0，结果依然可能是负的。
-        double randomFactor = random.nextGaussian();
+        double randomFactor = ThreadLocalRandom.current().nextGaussian();
 
         // 原始波动 = 市场均值 + (随机因子 * 市场波动率)
         double rawChange = marketMean + (randomFactor * marketStdDev);
@@ -64,7 +71,7 @@ public class NavAlgorithmUtils {
         if (riskLevel != null && riskLevel == 1) {
             // R1 的年化收益大概在 2%~3%，折合日均收益约万分之一 (0.0001)
             // 波动极小，用绝对的正态分布即可，确保不亏损
-            double r1Yield = 0.0001 + (random.nextGaussian() * 0.00001);
+            double r1Yield = 0.0001 + (ThreadLocalRandom.current().nextGaussian() * 0.00001);
             return BigDecimal.valueOf(Math.max(0, r1Yield)).setScale(8, RoundingMode.HALF_UP);
         }
 

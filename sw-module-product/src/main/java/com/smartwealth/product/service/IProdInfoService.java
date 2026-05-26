@@ -39,6 +39,9 @@ public interface IProdInfoService extends IService<ProdInfo> {
     @Transactional(rollbackFor = Exception.class)
     List<ProdInfo> updateAllProductNav();
 
-    @Async("taskExecutor") // 建议异步执行，不要阻塞主流程事务
+    // 【BUGFIX】之前 bean 名写成 "taskExecutor"，工程内并不存在该 bean，
+    //          会回退到 SimpleAsyncTaskExecutor（每次新建线程，无队列、无复用）。
+    //          ThreadPoolConfig 里专门为预热定义了 warmupThreadPool，按名指定。
+    @Async("warmupThreadPool")
     void warmUpCacheAfterNavUpdate(List<ProdInfo> productList);
 }

@@ -60,6 +60,13 @@ public class AssetLocalMsgJobHandler {
                 type = "PURCHASE";
             } else if (msg.getMsgId().startsWith("MSG_REED")) {
                 type = "REDEEM";
+            } else if (msg.getMsgId().startsWith("MSG_RECH") || msg.getMsgId().startsWith("MSG_WITH")) {
+                // 【BUGFIX-#13】充值/提现的本地消息当前没有银行通道适配器，
+                //              老代码会直接 markAsDead(status=3)，意味着每条新充值/提现请求
+                //              都被永久死信，无法后续接入银行通道补偿。
+                //              这里改为跳过并打告警，保留 status=0 等待真正消费者上线。
+                log.warn("【待接入】充值/提现外部通道尚未实现，暂保留消息等待接入: {}", msg.getMsgId());
+                return;
             } else {
                 log.warn("未知消息类型，跳过: {}", msg.getMsgId());
                 markAsDead(msg, "未知的消息前缀: " + msg.getMsgId());
@@ -68,8 +75,11 @@ public class AssetLocalMsgJobHandler {
 
             log.info("正在补发回执: ID={}, Type={}, OrderId={}", msg.getMsgId(), type, orderId);
 
-            // ⚠️ 物理前提：你的 assetResultProducer.sendResult 底层必须透传了 CorrelationData(msg.getMsgId())
-            assetResultProducer.sendResult(orderId, type, isSuccess, reason);
+            // 【BUGFIX-#13】显式把数据库里那一行的 msgId 透传为 CorrelationData，
+            //              这是 ConfirmCallback 能精确更新当前行的唯一依据。
+            //              老 sendResult(orderId,type,...) 内部会按规则推导 msgId，
+            //              对于赎回成功/失败两种前缀容易错配，必须由本任务以"行为准"。
+            assetResultProducer.sendResult(msg.getMsgId(), orderId, type, isSuccess, reason);
 
             // 【核心修复 2】绝对删除 msg.setStatus(1) 和 updateById！
             // 权力交接：发送动作结束，状态流转全权移交给资产端的 RabbitmqConfirmConfig

@@ -90,11 +90,29 @@ public class Tradetransactionhelper {
         return Result.success(order.getId().toString() + "申购申请已受理");
     }
 
+    @Autowired
+    private com.smartwealth.product.mapper.ProdInfoMapper prodInfoMapper;
+
     @Transactional(rollbackFor = Exception.class)
     public Result<String> executeRedeemWithPessimisticLock(Long userId, RedemptionDTO dto, ProdInfo prod, Long requestId) {
 
         // 1. 开启并发预锁 (悲观锁生效，霸占数据库行锁)
         assetService.selectprelock(userId);
+
+        // 【BUGFIX-P2-#29】事务内重新读 nav，避免使用"事务前预读"的陈旧值。
+        //   场景：上层 redeemByProduct 先 select 了一次 prod，几十毫秒后才进事务，
+        //         期间净值 Job/管理员手工修复都可能改写 t_prod_info.current_nav；
+        //   后果：用陈旧 nav 计算赎回金额，可能让用户多拿钱（净值跌了用户却按高价赎）或少拿钱。
+        //   做法：在悲观锁锁完用户钱包之后立刻重读最新 nav，作为本次赎回的"定价基准"，
+        //         之后就一直用 currentNav 这个本地变量，不再读 prod.getCurrentNav()。
+        ProdInfo freshProd = prodInfoMapper.selectById(prod.getId());
+        if (freshProd == null) {
+            return Result.fail(ResultCode.PRODUCT_NOT_EXIST);
+        }
+        if (freshProd.getCurrentNav() == null
+                || freshProd.getCurrentNav().compareTo(BigDecimal.ZERO) <= 0) {
+            return Result.fail(ResultCode.FAILURE.getCode(), "产品净值数据异常，请稍后再试");
+        }
 
         // 2. 查找符合条件的持仓订单 (必须在锁生效后查询，确保数据绝对最新)
         List<TradeOrder> eligibleOrders = tradeOrderService.list(new LambdaQueryWrapper<TradeOrder>()
@@ -103,7 +121,7 @@ public class Tradetransactionhelper {
                 .eq(TradeOrder::getStatus, TradeStatusEnum.HOLDING)
                 .orderByAsc(TradeOrder::getCreateTime));
 
-        // 3. 校验“可用份额”
+        // 3. 校验"可用份额"
         BigDecimal totalAvailable = eligibleOrders.stream()
                 .map(o -> o.getQuantity().subtract(o.getFrozenQuantity()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -113,8 +131,8 @@ public class Tradetransactionhelper {
             return Result.fail(ResultCode.HOLDING_NOT_ENOUGH);
         }
 
-        // 4. 获取前置层传进来的静态数据，准备核心计算
-        BigDecimal currentNav = prod.getCurrentNav();
+        // 4. 用事务内最新的 nav 进行核心计算
+        BigDecimal currentNav = freshProd.getCurrentNav();
         BigDecimal remainingNeed = dto.getRedeemQuantity();
 
         List<TradeOrder> ordersToUpdate = new ArrayList<>();

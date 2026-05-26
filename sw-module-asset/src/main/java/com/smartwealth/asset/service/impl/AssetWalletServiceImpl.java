@@ -109,7 +109,10 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
         }
 
         // 4. 锁定钱包并更新金额（悲观锁，防止并发算错余额）
-        System.out.println(userId);
+        // 【BUGFIX-P2】移除遗留的 System.out.println(userId)：
+        //   ① 直接走 stdout，不走日志框架，无法被 ELK / 日志采集捕获；
+        //   ② 用户ID 这种潜在敏感字段不应未经脱敏直接打到运维看不到的位置；
+        //   ③ 高并发下还会因 IO 同步阻塞稍稍降低吞吐。
         AssetWallet wallet = this.getOne(new LambdaQueryWrapper<AssetWallet>()
                 .eq(AssetWallet::getUserId, userId)
                 .last("FOR UPDATE"));
@@ -160,7 +163,9 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
         message.setContent(JSON.toJSONString(payload));
 
         // 设置初始状态和重试参数
-        message.setStatus(1);
+        // 【BUGFIX】之前误写为 1(已成功)，定时任务 selectPendingMsgs 只扫 status=0，
+        //          永远扫不到这条消息，外部下游通知形同虚设。
+        message.setStatus(0);
         message.setRetryCount(0);
 
         // 存入数据库
@@ -247,7 +252,8 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
         message.setContent(JSON.toJSONString(payload));
 
         // 设置初始状态
-        message.setStatus(1); // 0-待处理
+        // 【BUGFIX】之前误写为 1，提现的银行通道补偿任务永远扫不到这条消息。
+        message.setStatus(0);
         message.setRetryCount(0);
 
         // 存入资产模块本地消息表
@@ -277,11 +283,14 @@ public class AssetWalletServiceImpl extends ServiceImpl<AssetWalletMapper, Asset
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void setPayPassword(Long userId, String password) {
-        // 建议使用 BCrypt 等算法进行加密存储，不要存明文
+        // 【BUGFIX-#15】之前算了一次 encryptedPwd 又在 SQL 里再算一次 encode(password)，
+        //              encryptedPwd 这个局部变量从未被使用，纯粹是冗余加密 + 误导阅读者。
+        //              BCrypt 是带 salt 的算法，两次 encode 结果不同，
+        //              这里只 encode 一次并复用，保证逻辑清晰且节省 CPU。
         String encryptedPwd = passwordEncoder.encode(password);
         this.update(new LambdaUpdateWrapper<AssetWallet>()
                 .eq(AssetWallet::getUserId, userId)
-                .set(AssetWallet::getPayPassword, passwordEncoder.encode(password)));
+                .set(AssetWallet::getPayPassword, encryptedPwd));
     }
 }
 

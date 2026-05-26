@@ -55,8 +55,13 @@ spring:
             max-interval: 10000ms
 
 # MyBatis Plus 配置
+# 【REFACTOR-Step2-1】Mapper XML 已迁回各业务模块的 src/main/resources/mapper/，
+# 主配置无需调整（classpath*: 已支持多 jar 扫描），但为了将来"按模块单独打 jar"也兼容子目录，
+# 这里同时显式列出根目录与子目录两种通配，避免有人把 xml 放进 mapper/asset/ 类子目录而忘了改 yml。
 mybatis-plus:
-  mapper-locations: classpath*:mapper/*.xml
+  mapper-locations:
+    - classpath*:mapper/*.xml
+    - classpath*:mapper/**/*.xml
   configuration:
     map-underscore-to-camel-case: true # 开启下划线转驼峰
   type-enums-package: com.smartwealth.user.enums
@@ -89,3 +94,8 @@ smartwealth:
   security:
     # 优先从环境变量读取
     allowed-ips: 127.0.0.1,192.168.1.100 # Python 服务的 IP 白名单
+    # 【安全】JWT 与 AES 密钥严禁硬编码在代码里，必须通过环境变量覆盖。
+    # 占位语法：${ENV_VAR:default}，生产部署时通过环境变量注入。
+    jwt-secret: ${SMARTWEALTH_JWT_SECRET:CHANGE_ME_SmartWealth_Jwt_Secret_2026_For_Dev_Only}
+    jwt-expire-ms: ${SMARTWEALTH_JWT_EXPIRE_MS:604800000}    # 默认 7 天
+    aes-key: ${SMARTWEALTH_AES_KEY:CHANGE_ME_16Byts}         # 必须是 16/24/32 字节

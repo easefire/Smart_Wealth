@@ -3,6 +3,7 @@ package com.smartwealth.trade.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.smartwealth.api.InternalTradeApi;
 import com.smartwealth.product.entity.ProdInfo;
 import com.smartwealth.product.service.impl.InternalProductService;
 import com.smartwealth.trade.entity.DailyProfit;
@@ -30,7 +31,7 @@ import java.util.Map;
  * @since 2026-01-12
  */
 @Service
-public class InternalTradeService {
+public class InternalTradeService implements InternalTradeApi {
 
     @Autowired
     private TradeOrderMapper orderMapper;
@@ -42,6 +43,7 @@ public class InternalTradeService {
     private ITradeOrderService tradeOrderService;
 
     // 获取用户持仓总市值和总盈亏
+    @Override
     public Map<String, BigDecimal> getUserPositionSummary(Long userId) {
         // 1. 获取所有持有中(1)的订单
         List<TradeOrder> orders = orderMapper.selectList(new LambdaQueryWrapper<TradeOrder>()

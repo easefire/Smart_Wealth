@@ -15,7 +15,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -68,7 +68,10 @@ public class InternalBankCardImpl implements InternalBankCardService {
 
                     // 4. 回写缓存，并设置过期时间（防止冷数据永久占用内存）
                     // 建议设置 30 分钟到 1 小时随机过期，防止缓存雪崩
-                    redisService.set(cacheKey, bankCardVO, 30 + new Random().nextInt(30), TimeUnit.MINUTES);
+                    // 【BUGFIX-P2-#31】new Random() 每次申请新 seed，多线程下 CAS 自旋更糟，
+                    //                   而且这只是给 TTL 加个抖动，ThreadLocalRandom 完全够用。
+                    redisService.set(cacheKey, bankCardVO,
+                            30 + ThreadLocalRandom.current().nextInt(30), TimeUnit.MINUTES);
 
                     return bankCardVO;
                 }

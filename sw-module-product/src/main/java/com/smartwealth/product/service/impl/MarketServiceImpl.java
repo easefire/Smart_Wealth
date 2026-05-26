@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * <p>
@@ -27,7 +27,10 @@ import java.util.Random;
  */
 @Service
 public class MarketServiceImpl extends ServiceImpl<MarketLogMapper, MarketSentimentLog> implements IMarketService {
-    private final Random random = new Random();
+    // 【BUGFIX-P2-#31】不再持有实例 Random：
+    //   ① 净值 Job + 市场情绪 Job 都会并发调到本类，
+    //      Random 内部 AtomicLong CAS 在多线程下浪费 CPU、统计分布略偏；
+    //   ② 直接用 ThreadLocalRandom，零竞争、无需字段。
     @Autowired
     private MarketLogMapper marketLogMapper;
     @Autowired
@@ -83,7 +86,7 @@ public class MarketServiceImpl extends ServiceImpl<MarketLogMapper, MarketSentim
 
         // 1. 黑天鹅事件判定 (Black Swan Event)
         // 设定 2% 的概率发生黑天鹅，完全无视规律，随机突变
-        if (random.nextDouble() < 0.02) {
+        if (ThreadLocalRandom.current().nextDouble() < 0.02) {
             return randomBlackSwan(todaySentiment);
         }
 
@@ -136,7 +139,7 @@ public class MarketServiceImpl extends ServiceImpl<MarketLogMapper, MarketSentim
         }
 
         // 轮盘赌算法选择下一个状态
-        int randomVal = random.nextInt(totalWeight);
+        int randomVal = ThreadLocalRandom.current().nextInt(totalWeight);
         int currentSum = 0;
         for (int i = 0; i < weights.length; i++) {
             currentSum += weights[i];
@@ -154,7 +157,7 @@ public class MarketServiceImpl extends ServiceImpl<MarketLogMapper, MarketSentim
     private MarketSentiment randomBlackSwan(MarketSentiment current) {
         // 简单粗暴：完全随机，或者倾向于反转
         // 这里我们做一个简单的完全随机，模拟市场的不可预测性
-        int randomOrder = random.nextInt(5);
+        int randomOrder = ThreadLocalRandom.current().nextInt(5);
         return MarketSentiment.getByOrder(randomOrder);
     }
 }
