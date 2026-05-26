@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartwealth.trade.mapper.TradeOrderMapper">
+
+
+    <update id="onlyUnfreeze">
+        UPDATE t_trade_order
+        SET frozen_quantity = frozen_quantity - #{amount},
+            update_time = NOW()
+        WHERE id = #{orderId} AND frozen_quantity >= #{amount}
+    </update>
+    <update id="deductPositions">
+        UPDATE t_trade_order
+        SET
+            quantity = quantity - #{reduceQuantity},
+            amount = amount - #{reducePrincipal},
+            accumulated_income = accumulated_income - #{reduceIncome},
+            frozen_quantity = frozen_quantity - #{reduceQuantity}, -- 记得释放冻结！
+            update_time = NOW()
+        WHERE id = #{id}
+          AND quantity >= #{reduceQuantity} -- 乐观锁防止超卖（扣成负数）
+    </update>
+
+    <update id="updateStatus">
+        UPDATE t_trade_order
+        SET status = #{status}, update_time = NOW()
+        WHERE id = #{id}
+    </update>
+    <!--
+        【BUGFIX】原 SQL 使用 separator=";" 的多语句更新，依赖 JDBC 参数 allowMultiQueries=true，
+        而当前 application.yml 的 url 并未启用该参数，上线必报 SQL 语法错误，导致每日结算失败。
+        改写为单条 UPDATE + CASE WHEN，一次性累加，无需多语句、无需特殊驱动参数。
+        语义说明：每条 list item 的 accumulatedIncome 字段在结算批次里承载“当日增量收益”，
+                  此处把它累加到订单累计收益字段上。
+    -->
+    <update id="batchAddIncome">
+        UPDATE t_trade_order
+        SET accumulated_income = accumulated_income + CASE id
+        <foreach collection="list" item="item">
+            WHEN #{item.id} THEN #{item.accumulatedIncome}
+        </foreach>
+            ELSE 0
+        END,
+            update_time = NOW()
+        WHERE id IN
+        <foreach collection="list" item="item" open="(" separator="," close=")">
+            #{item.id}
+        </foreach>
+    </update>
+
+    <select id="checkIncomeConsistency" resultType="com.smartwealth.trade.dto.TradeCheckDTO">
+        SELECT
+            o.id AS order_id,
+            o.accumulated_income AS order_income,
+            IFNULL(SUM(p.daily_profit), 0) AS real_sum_income
+        FROM t_trade_order o
+                 -- 关联收益流水表
+                 LEFT JOIN t_trade_daily_profit p ON o.id = p.order_id
+        -- 只查持有中(1)或已赎回(2)的订单，状态根据你实际情况调整
+        WHERE o.status IN (1, 2)
+        GROUP BY o.id
+        -- 【核心】找出 账目不平 的坏蛋 (允许 0.01 误差)
+        HAVING ABS(o.accumulated_income - IFNULL(SUM(p.daily_profit), 0)) > 0.01
+    </select>
+    <!--
+        【BUGFIX-#21】
+        ① SUM(amount) → SUM(quantity)
+           t_trade_order.amount 是申购"金额(CNY)"，对账要的是"份额"。
+           老 SQL 把金额当份额累加，跟资产池子做差永远是天文数字，
+           SharePoolCheckJob 每天都会告警，但其实账目本身没问题。
+        ② RedemptionRecord.status 枚举：1=SUCCESS, 2=FAIL。
+           老 SQL 用 status=2 即"赎回失败"，逻辑上应该是"成功扣减的份额"，
+           必须改为 status=1，否则连"已经退场的份额"都会漏掉。
+        ③ 顺手补一个 product_id（赎回表用的是 product_id 而不是 prod_id），
+           表名/字段名以实体注解 @TableField 为准。
+    -->
+    <select id="sumTradeSharesByPool" resultType="com.smartwealth.trade.dto.PoolCheckDTO">
+        SELECT
+            o.user_id,
+            o.prod_id,
+            (
+                -- 当前持有的份额（包括冻结中）
+                IFNULL(SUM(o.quantity), 0)
+                    +
+                -- 已成功赎回退场的份额
+                IFNULL((SELECT SUM(r.amount) FROM t_trade_redemption_record r
+                        WHERE r.user_id = o.user_id
+                          AND r.product_id = o.prod_id
+                          AND r.status = 1), 0)
+                ) AS amount
+        FROM t_trade_order o
+        GROUP BY o.user_id, o.prod_id
+    </select>
+    <select id="selectUnsettledOrders" resultType="com.smartwealth.trade.entity.TradeOrder">
+        <!-- 【BUGFIX】status 字段是 tinyint，HOLDING 对应 1。
+             之前写成 'HOLDING' 字符串，MySQL 会把字符串强转为 0，
+             导致结算 Job 永远扫不到正确订单。-->
+        SELECT o.* FROM t_trade_order o
+        WHERE o.status = 1
+          AND o.id > #{lastId}
+          AND MOD(o.user_id, #{shardTotal}) = #{shardIndex}
+          AND NOT EXISTS (
+            SELECT 1 FROM t_trade_daily_profit p
+            WHERE p.order_id = o.id
+              AND p.profit_date = #{bizDate}
+        )
+        ORDER BY o.id ASC
+            LIMIT #{fetchSize}
+    </select>
+
+</mapper>
